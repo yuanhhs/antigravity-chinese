@@ -1,0 +1,15 @@
+scratch/
+_temp_asar/
+node_modules/
+.DS_Store
+AGENTS.md
+
+# Tool-specific exclusions
+.reasonix/
+.codex/
+codex/
+.codegraph/
+
+# Temporary files
+temp/
+temps/
