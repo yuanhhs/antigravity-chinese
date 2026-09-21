@@ -4,16 +4,7 @@
 > **匹配版本**：Antigravity v2.15.x（v2.12+ 兼容）  
 > **核心引擎**：Node.js (无需安装 Python，零依赖，极速极稳)  
 > **汉化范围**：包括软件界面、顶部系统菜单、任务栏右键菜单、加载动画、设置面板、新手引导及登录页。  
-> **注入原理**：通过 ASAR 还原与重包注入两层汉化：**源码级**（在主进程拦截 language_server 下发的前端 bundle，按 AST 精确替换界面文案字面量）+ **DOM 级**（`preload.js` 动态翻译兜底）。绝不修改核心二进制，一键安装与完美还原。
-
-> [!WARNING]
-> **关于聊天历史记录/对话框内容被汉化的已知问题及匹配机制说明（开发者必读）**：
-> - **现象**：当你在聊天或对话框中发送了某些与软件界面 UI 完全相同的英文关键词或句子时，该对话气泡在界面上可能会被翻译引擎汉化显示。
-> - **核心匹配机制**：
->   - **短词（长度 <= 15 字符，如 `Knowledge`）**：翻译仅在词条 **完全精准匹配（且单独占一行）** 时触发。如果该词前后有其他任何字符、空格或标点符号（如 `Knowledge是什么`、`哈哈 Knowledge`），则 **绝对不会** 被翻译。如果需要强行阻止其翻译，可使用中文双引号将其包裹（如 `“Knowledge”`）即可完美规避。
->   - **长句（长度 > 15 字符，如 `Enable Antigravity to deploy apps...`）**：由于需要兼容界面动态渲染，长句采用 **“子串滑动替换”** 算法。这意味着只要输入的文本中包含了这一长串完整英文字句，该段子串就会被自动翻译成中文（即使加了引号或前后带有文字）。但由于长句匹配极其苛刻，必须一字不差（包括大小写、标点和空格），因此实际聊天中几乎不可能误触发。
-> - **说明**：这**不影响 AI 接收到的原文**。大模型获取到的依旧是你发送的纯正英文原始指令，仅在软件的视觉渲染层面发生了汉化，纯属视觉影响，无需担心影响大模型的效果。
-> - **欢迎提 PR**：由于 Electron 沙箱及 iframe webview DOM 树隔离问题，此处难以直接利用主窗口类名隔离，期待有缘人提交 PR 完美解决该问题！
+> **注入原理**：**源码级汉化**——主进程拦截 language_server 下发的前端 bundle（`main.js`），用 AST 按语法位置精确替换界面文案字面量；不做 DOM 层的运行时文本替换，因此聊天内容、代码、文件名、终端输出永远不会被误翻。绝不修改核心二进制，一键安装与完美还原。
 
 ## 📸 汉化效果展示
 
@@ -33,10 +24,10 @@
 ## 📂 项目文件结构
 - **`双击运行中文汉化工具.bat`** / **`.command`**：Windows / macOS 一键执行入口，运行后可选择“安装汉化”或“卸载还原官方英文”。
 - **`localization_engine.js`**：核心汉化逻辑，负责 app.asar 的解包、代码注入、重新打包以及 macOS 下的自动深度重签名。
-- **`dicts_src/`**：**源码级字典**（主力）。键是前端源码里的字面量原文（带插值的句子写作 `Allow ${0}?`），值为中文；值为 `null` 表示明确保留英文（专有名词、按键名等）。
+- **`dicts_src/`**：**源码级字典**。键是前端源码里的字面量原文（带插值的句子写作 `Allow ${0}?`），值为中文；值为 `null` 表示明确保留英文（专有名词、按键名等）。`70_v2.15.json` 是 2.15 版本补翻，`95_scoped_identifiers.json` 是“既做显示又做路由键”的字符串（带 `scope` 标记），`90_fixups.json` 是最终修正表。
 - **`src_layer/`**：源码级汉化运行时，安装时会被复制进 app.asar 的 `dist/agy_zh/`：`agy_src_i18n.js`（AST 提取/替换核心）、`bootstrap.js`（主进程拦截 `main.js`）、`acorn.js`（JS 解析器，MIT）。
-- **`tools/extract_src_strings.js`**：从当前版本的 `main.js` 提取全部界面文案候选，并与 `dicts_src/` 做覆盖率对比（软件升级后补翻用）。
-- **`dicts/`**：DOM 级字典（兜底层），内含按模块分类的 JSON 对照翻译字典。
+- **`terminology.js`**：术语策略（Git 术语保留英文、Review 统一译为“审核”等），安装时对字典译文统一后处理。
+- **`tools/extract_src_strings.js`**：**升级补翻工具**。从正在运行的 Antigravity 抓取当前版本的 `main.js`，与 `dicts_src/` 对比后生成“新版本待翻清单”。
 
 ---
 
@@ -67,25 +58,14 @@
    - **Windows**：双击运行 **`双击运行中文汉化工具.bat`**。
    - **macOS**：双击运行 **`双击运行中文汉化工具.command`**。
 3. 按提示选择 **[1] 安装中文汉化**（直接回车即可）。
-4. 按提示选择左上角品牌显示方式：
-   - **显示英文 Antigravity（默认推荐）**：保留官方品牌名，避免左上角显示过长。
-   - **不显示品牌名**：隐藏左上角的品牌文字。
-   - **显示中文品牌名**：保持原汉化效果，显示“反重力智能编程”。
-5. 运行完成后，重新启动 Antigravity 软件，即可畅享全中文界面！
+4. 运行完成后，重新启动 Antigravity 软件，即可畅享全中文界面！
 
-### 品牌显示命令行参数
-
-如果您通过命令行运行 `localization_engine.js`，可使用 `--brand-title` 控制左上角品牌名：
+也可以直接用命令行运行引擎：
 
 ```bash
-# 默认推荐：左上角显示 Antigravity
-node localization_engine.js --brand-title english
-
-# 隐藏左上角品牌名
-node localization_engine.js --brand-title hidden
-
-# 显示中文品牌名
-node localization_engine.js --brand-title translated
+node localization_engine.js                       # 安装（自动探测安装目录）
+node localization_engine.js --install-dir <目录>  # 指定安装目录
+node localization_engine.js --huifu               # 卸载还原
 ```
 
 ---
@@ -106,8 +86,8 @@ node localization_engine.js --brand-title translated
 1. **自动释放锁**：脚本运行前会自动探测并安全关闭 Antigravity 进程，防止文件占用锁定。
 2. **安全备份**：首次运行时，会在软件目录自动创建原始 `app.asar.bak` 文件，确保随时可无损还原。
 3. **精准注入**：
-   - 注入 `main.js` + `dist/agy_zh/`（**源码级汉化层**）：Antigravity 2.x 的界面代码并不在 app.asar 里，而是内嵌在 `language_server` 中、启动后通过本地 HTTPS 下发给窗口。主进程用 Chrome DevTools Protocol 的 `Fetch` 域只拦截对 `/main.js` 的这一个请求，用 acorn 解析成 AST，把处于展示位置（JSX children、label/title/placeholder/aria-label 等属性、模板字符串）的字面量替换为中文后再交给窗口。因为是按语法位置替换，同一个单词出现在比较、路由键、CSS 里不会被误改；带插值的句子（如 `Pushed ${0} commits to ${1}`）也能整句翻译。译文按（bundle ETag + 字典哈希）缓存在用户数据目录，同一版本只解析一次。
-   - 注入 `preload.js`（**DOM 级兜底层**）：采用 WeakSet 记录与 Shadow DOM 穿透，启动高效的 `MutationObserver` 引擎，动态监测并翻译源码层未覆盖的渲染层文本。
+   - 注入 `main.js` + `dist/agy_zh/`（**源码级汉化层**）：Antigravity 2.x 的界面代码并不在 app.asar 里，而是内嵌在 `language_server` 中、启动后通过本地 HTTPS 下发给窗口。主进程用 Chrome DevTools Protocol 的 `Fetch` 域只拦截对 `/main.js` 的这一个请求，用 acorn 解析成 AST，把处于展示位置（JSX children、label/title/placeholder/aria-label 等属性、模板字符串、工具步骤标题等）的字面量替换为中文后再交给窗口。因为是按语法位置替换，同一个单词出现在比较、路由键、CSS 里不会被误改；带插值的句子（如 `Pushed ${0} commits to ${1}`）也能整句翻译。对“既做显示又做路由键”的字符串（设置页的 General / Appearance 等），字典里用 `scope: "all"` 标记后会把整个 bundle 内的该字符串一致改名（含比较和 case 分支），逻辑不变。译文按（bundle ETag + 字典哈希）缓存在用户数据目录，同一版本只解析一次。
+   - 不再注入 DOM 级文本替换脚本：聊天记录、代码、文件名、终端里的英文不会被改动。
    - 注入 `menu.js`：深度补丁系统级标题栏菜单。
    - 注入 `tray.js`：汉化托盘与右键通知状态菜单。
    - 注入 `loadingOverlay.js`：注入极具极客风格的趣味加载语：“反重力引擎已启动，正在摆脱地心引力...”。
@@ -144,7 +124,7 @@ node localization_engine.js --brand-title translated
 ---
 
 ### 🔄 更新生效流程
-1. **命令 AI 更新**：在对话中通过截图或文字告诉 AI 您的汉化需求，AI 会自动更新 `dicts_src/`（源码级，优先）或 `dicts/`（DOM 级）下的字典文件。
+1. **命令 AI 更新**：在对话中通过截图或文字告诉 AI 您的汉化需求，AI 会自动更新 `dicts_src/` 下的字典文件（键必须是源码里的原文，AI 可用 `temps/src_candidates.json` 核对）。
 2. **退出软件**：**完全退出**您的 Antigravity 软件。
 3. **重新注入**：在当前文件夹中**再次双击运行 `双击运行中文汉化工具.bat` / `.command`** 并选择安装，重新部署汉化。
 4. **重启软件**：重新打开 Antigravity，您的改动即可完美生效！
@@ -153,28 +133,35 @@ node localization_engine.js --brand-title translated
 
 ## 📝 词典自定义指南 (供极客手动使用)
 
-### 源码级字典 `dicts_src/`（推荐优先修改）
+### 源码级字典 `dicts_src/`
 - 键必须与前端源码中的字面量**完全一致**（含大小写、标点、首尾空格）。带插值的句子用 `${0}`、`${1}` 表示第 1、2 个插值，例如 `"Pushed ${0} commit${1} to ${2}."`；译文可以省略或重排占位符。
 - 值为 `null` 表示明确不翻译；值为 `""` 表示删除该片段（用于英文复数后缀等）。
-- 文件按序号加载，后面的文件覆盖前面的同名键，`90_fixups.json` 是最终修正表。
-- 软件升级后，运行下面的命令可拿到新版本的全部候选文案并对比覆盖率（需要 Antigravity 正在运行，或手动传入 `main.js` 路径）：
-  ```bash
-  node tools/extract_src_strings.js            # 自动从本机运行中的 Antigravity 抓取 main.js
-  node tools/extract_src_strings.js path/to/main.js
+- 值也可以写成对象来放宽“标识符安全阀”（默认情况下，同一字符串只要在源码别处被当作比较值 / 键名 / 查找实参使用，就不会被翻译）：
+  ```json
+  "General": { "zh": "通用", "scope": "all" },
+  "Conversations": { "zh": "会话", "scope": "display", "notWith": ["prefix"] },
+  "New Project": { "zh": "新建项目", "scope": "display", "keys": ["label"] }
   ```
-  未翻译条目会写到 `temps/src_candidates.json`（值为空串），补翻后放进 `dicts_src/` 重新安装即可。
+  - `scope: "all"`：整个 bundle 里所有等于原文的字符串字面量一起改名（含 `===` 比较、`case`、Map 键、函数实参），适用于只在前端内部流转的路由键；提取工具会列出无法一起改名的位置（标识符形式的对象键、模板片段）供确认。
+  - `scope: "display"`：只翻译展示位置（label / title / children 等），比较和键名保持英文；`keys` 限定只译哪些属性名下的值，`notWith` 表示所在对象含有这些兄弟属性时不译。
+- 文件按序号加载，后面的文件覆盖前面的同名键：`00_common.json` → 按主题分文件 → `70_v<版本>.json`（版本补翻） → `90_fixups.json`（修正表） → `95_scoped_identifiers.json`。
+- 安装时 `terminology.js` 会对译文做统一后处理（Git 术语保留英文、Review 统一为“审核”等）。
 
-### DOM 级字典 `dicts/`（兜底层）
-如果某段文本在源码层找不到（例如由服务端返回的动态文案），可以直接打开 `dicts/` 目录下的 JSON 文件：
-- **`common.json`**：公共基础词汇、侧边栏概览、登录页、常用按钮等。
-- **`page_settings.json`**：包含极其丰富的详细设置面板、权限二级菜单对照。
-- **`menu_nav.json`**：系统及菜单栏翻译。
+### 🔁 软件升级后如何快速补翻（可持续汉化）
+1. 升级 Antigravity 后先照常运行 **`双击运行中文汉化工具`** 重新安装：旧字典能覆盖的文案立刻恢复中文，只有**新增 / 改动的文案**会显示英文。
+2. 保持 Antigravity 处于运行状态，在汉化包目录执行：
+   ```bash
+   node tools/extract_src_strings.js
+   ```
+   工具会自动从本机 language_server 抓取新版本的 `main.js`，与 `dicts_src/` 对比，并输出：
+   - 控制台：候选总数、已翻译 / 未翻译 / 保留英文的数量，以及“字典里有但新版本已删除”的键数量；
+   - `temps/pending_<版本号>.json`：**新版本待翻清单**——只包含字典里还没有的原文，能从旧译文推断的（大小写 / 标点 / 单复数 / 措辞微调）已预填建议译文，其余条目的值仍是英文原文；
+   - `temps/src_candidates.json`：全部候选及其源码上下文样例，翻译拿不准时可查语境；
+   - `temps/src_candidates.dead.json`：新版本已不存在的键（可以删，留着也无害）。
+3. 把待翻清单里仍为英文的值翻成中文（专有名词、按键名写 `null`），整份文件另存为 `dicts_src/70_v<版本号>.json`。也可以直接把这份清单发给 AI 助手让它翻译。
+4. 再次运行 **`双击运行中文汉化工具`** 安装并重启软件。译文缓存按 bundle ETag + 字典哈希区分，无需手动清理。
 
-在 JSON 中新增一行，格式如下即可（注意英文逗号）：
-```json
-"Original English Text": "您的中文翻译"
-```
-保存后，双击运行 **`双击运行中文汉化工具.bat` / `.command`** 并选择安装，重新部署汉化即可。
+> 如果没有运行中的 Antigravity（例如在另一台机器上补翻），也可以把抓到的 `main.js` 路径作为参数传给工具：`node tools/extract_src_strings.js path/to/main.js`。
 
 ---
 
@@ -191,9 +178,9 @@ node localization_engine.js --brand-title translated
 
 ### 3）软件官方更新后，汉化失效了怎么办？
 * 软件升级时，官方会覆盖 `app.asar` 文件。您无需担心，直接完全退出软件，重新双击运行 **`双击运行中文汉化工具.bat`** 并选择安装，重新注入一次即可完美恢复中文。
-* 新版本新增的文案会暂时显示英文（源码层只替换字典里有的原文），运行 `node tools/extract_src_strings.js` 即可列出所有新增文案，补翻后重新安装。
+* 新版本新增的文案会暂时显示英文（源码层只替换字典里有的原文），按上文“软件升级后如何快速补翻”运行 `node tools/extract_src_strings.js`，把生成的待翻清单补翻后重新安装即可。
 
-### 4）源码级汉化层没有生效（界面仍是英文、但菜单已汉化）？
+### 4）界面仍是英文、但顶部菜单已汉化？
 * 查看 `%APPDATA%\Antigravity\logs\main.log`（macOS 为 `~/Library/Application Support/Antigravity/logs/main.log`）中带 `[agy-zh]` 的行：正常应有 `translated main.js: N literals` 或 `cache hit`。
 * 若出现 `debugger attach failed`，说明有其他调试器占用了窗口（例如打开了开发者工具）；关闭后重启软件即可。
 * 译文缓存位于用户数据目录的 `zh-cn-src-cache/`，删除后重启软件会自动重新生成；卸载汉化时会自动清理。

@@ -1,39 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const child_process = require('child_process');
+const { applyTerminologyPolicy } = require('./terminology');
 
-const DICTS_FOLDER = 'dicts';
-const BRAND_TITLE_ALIASES = {
-    english: 'english',
-    en: 'english',
-    default: 'english',
-    hidden: 'hidden',
-    hide: 'hidden',
-    none: 'hidden',
-    translated: 'translated',
-    chinese: 'translated',
-    cn: 'translated',
-    zh: 'translated'
-};
-
-function getOptionValue(name, defaultValue) {
-    const args = process.argv.slice(2);
-    for (let i = 0; i < args.length; i++) {
-        if (args[i] === name) {
-            return args[i + 1] || defaultValue;
-        }
-        if (args[i].startsWith(name + '=')) {
-            return args[i].slice(name.length + 1);
-        }
-    }
-    return defaultValue;
-}
-
-const BRAND_TITLE_MODE = BRAND_TITLE_ALIASES[String(getOptionValue('--brand-title', 'english')).toLowerCase()] || 'english';
-
-
-const SIGNATURE_START = "/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */";
-const SIGNATURE_END = "/* --- ANTIGRAVITY CHINESE LOCALIZATION END --- */";
+// 旧版 DOM 级汉化层（preload.js 里的 MutationObserver 引擎）的注入标记：已移除该层，仅用于清理历史注入
+const LEGACY_DOM_SIGNATURE_START = "/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */";
+const LEGACY_DOM_SIGNATURE_END = "/* --- ANTIGRAVITY CHINESE LOCALIZATION END --- */";
 
 // ==========================================
 // 源码级汉化层（拦截前端 bundle，按 AST 替换字面量）
@@ -52,7 +24,8 @@ function loadSrcDictionary() {
         try {
             const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8'));
             for (const [k, v] of Object.entries(data)) {
-                if (v === null || typeof v === 'string') merged[k] = v;
+                if (v === null || typeof v === 'string') merged[k] = applyTerminologyPolicy(k, v);
+                else if (v && typeof v === 'object' && typeof v.zh === 'string') merged[k] = { ...v, zh: applyTerminologyPolicy(k, v.zh) };
             }
             files++;
         } catch (e) {
@@ -74,7 +47,7 @@ function cleanSrcBootstrap(content) {
 function injectSrcLayer(tempDir) {
     const dict = loadSrcDictionary();
     if (!dict) {
-        console.log(`[跳过] 未找到源码级字典目录 ${srcDictsFolder()}/，仅使用 DOM 层汉化。`);
+        console.log(`[跳过] 未找到源码级字典目录 ${srcDictsFolder()}/，界面文案不会被汉化。`);
         return false;
     }
     const mainPath = path.join(tempDir, "dist", "main.js");
@@ -158,432 +131,9 @@ function getAsarUnpackDirs(asarFile) {
 }
 
 
-function normalizeText(text) {
-    if (!text) return "";
-    return text.replace(/\s+/g, ' ')
-               .trim()
-               .replace(/’/g, "'")
-               .replace(/‘/g, "'")
-               .replace(/“/g, '"')
-               .replace(/”/g, '"')
-               .replace(/…/g, '...');
-}
-
-function loadDictionary() {
-    const totalMap = {};
-    const dictsDir = path.join(__dirname, DICTS_FOLDER);
-    if (fs.existsSync(dictsDir)) {
-        const files = fs.readdirSync(dictsDir);
-        for (const file of files) {
-            if (file.endsWith('.json')) {
-                try {
-                    const filePath = path.join(dictsDir, file);
-                    const fileContent = fs.readFileSync(filePath, 'utf-8');
-                    const data = JSON.parse(fileContent);
-                    for (const [k, v] of Object.entries(data)) {
-                        const normK = normalizeText(k);
-                        if (normK) totalMap[normK] = v;
-                    }
-                } catch (e) {
-                    // ignore
-                }
-            }
-        }
-    }
-    if (BRAND_TITLE_MODE === 'english') {
-        delete totalMap[normalizeText('Antigravity')];
-    } else if (BRAND_TITLE_MODE === 'hidden') {
-        totalMap[normalizeText('Antigravity')] = '';
-    }
-    return totalMap;
-}
-
-function generateJs() {
-    const fullDict = loadDictionary();
-    const longEntries = Object.entries(fullDict).sort((a, b) => b[0].length - a[0].length);
-    
-    const dictJson = JSON.stringify(fullDict, null, 4);
-    const entriesJson = JSON.stringify(longEntries);
-
-    const jsSource = `${SIGNATURE_START}
-(() => {
-    // V12.0 终极隔离版：基于容器回溯的物理隔离引擎
-    // 逻辑：不再仅仅检查当前标签，而是向上回溯父级，识别“代码/编辑器”禁区
-    const map = new Map(Object.entries(DICT_PLACEHOLDER));
-    const lowerMap = new Map();
-    for (const [k, v] of map.entries()) lowerMap.set(k.toLowerCase(), v);
-    
-    const longEntries = REPLACEMENT_ENTRIES_PLACEHOLDER;
-    const translatedValues = new WeakMap();
-
-    // 轻量级安全隔离：跳过脚本、样式、代码块(pre/code)以及编辑器区域
-    const SKIP_TAGS = ['SCRIPT', 'STYLE', 'PRE', 'CODE'];
-
-    function isProtectedZone(node) {
-        try {
-            if (!node) return false;
-            const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-            if (!el || typeof el.closest !== 'function') return false;
-
-            // 1. 代码块、Monaco编辑器、终端及用户可编辑区域
-            if (el.closest('pre, code, .monaco-editor, [contenteditable="true"], .xterm, [class*="terminal"]')) {
-                return true;
-            }
-
-            // 2. 项目列表与项目选择器（用户项目/文件夹名称，严禁被汉化字典误译）
-            // 包含：侧边栏项目卡片 [data-project-card="true"]、项目选择器下拉项 [data-testid="project-selector-item"] / [data-project-name]、
-            // 顶栏项目选择触发器 [data-testid="project-selector-trigger"] 以及面包屑导航 [data-testid="breadcrumb-segment"]
-            if (el.closest('[data-project-card="true"], [data-testid="project-selector-item"], [data-project-name], [data-testid="project-selector-trigger"], [data-testid="breadcrumb-segment"]')) {
-                return true;
-            }
-
-            // 3. 对话列表中的会话标题（会话标题属于用户/模型命名内容，严禁被字典替换为智能体、应用设置等）
-            // 在侧边栏和历史对话列表中，[data-cascade-id] / [data-testid^="conversation-row-"] 内的 .grow 容器即为标题
-            if (el.closest('[data-cascade-id], [data-testid^="conversation-row-"]') && el.closest('.grow, [class*="grow"]')) {
-                return true;
-            }
-
-            // 4. 文件树与文件名选项卡（防止 agent.ts, app.py 等文件名或目录名被汉化）
-            if (el.closest('[data-testid="file-title-name"], [data-testid="file-tree-node-icon"], [class*="group/tree"]')) {
-                return true;
-            }
-
-            // 5. 对话正文区域（用户输入的消息和模型生成的思考与回答正文）
-            if (el.closest('[data-testid="user-input-step"], [data-testid="planner-response-text"]')) {
-                return true;
-            }
-
-            return false;
-        } catch (e) {
-            return false;
-        }
-    }
-
-    function norm(s) {
-        if (!s) return '';
-        return s.replace(/\\s+/g, ' ').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/…/g, '...').trim();
-    }
-
-    function translateWithShortcut(val) {
-        if (!val) return null;
-        const match = val.match(/^(.+?)\\s*\\((Ctrl|Cmd|Alt|Shift|⌘|⌥|⇧|⌃)\\+?([^)]*)\\)$/i);
-        if (match) {
-            const prefix = match[1].trim();
-            const normPref = norm(prefix);
-            const lowerPref = normPref.toLowerCase();
-            let transPref = null;
-            if (map.has(normPref)) {
-                transPref = map.get(normPref);
-            } else if (lowerMap.has(lowerPref)) {
-                transPref = lowerMap.get(lowerPref);
-            }
-            if (transPref) {
-                return transPref + " (" + match[2] + (match[3] ? "+" + match[3] : "") + ")";
-            }
-        }
-        return null;
-    }
-
-    function translateNode(node) {
-        try {
-            if (!node) return;
-            
-            if (node.nodeType === Node.ELEMENT_NODE) {
-                const tag = node.tagName.toUpperCase();
-                if (SKIP_TAGS.includes(tag)) return;
-                if (node.isContentEditable) return;
-                if (node.classList && node.classList.contains('monaco-editor')) return;
-
-                // 翻译属性：placeholder, title, aria-label
-                for (const attr of ['placeholder', 'title', 'aria-label']) {
-                    const v = node.getAttribute(attr);
-                    if (v) {
-                        // 处于保护区内的元素，跳过属性翻译
-                        if (isProtectedZone(node)) continue;
-
-                        // 对话列表行的主跳转链接 a[href^="/c/"]，其 aria-label 即为会话标题，不应翻译
-                        if (attr === 'aria-label' && ((node.getAttribute('href') || '').startsWith('/c/') || node.closest?.('[data-cascade-id], [data-testid^="conversation-row-"]')?.querySelector?.('a') === node)) {
-                            continue;
-                        }
-
-                        const t = norm(v);
-                        const shortcutTrans = translateWithShortcut(t);
-                        if (shortcutTrans) node.setAttribute(attr, shortcutTrans);
-                        else if (/^Select project, current:/i.test(t)) {
-                            const trans = t.replace(/^Select project, current:\s*(.*)$/i, (m, name) => {
-                                return "选择项目，当前: " + name;
-                            });
-                            node.setAttribute(attr, trans);
-                        }
-                        else if (map.has(t)) node.setAttribute(attr, map.get(t));
-                        else if (lowerMap.has(t.toLowerCase())) node.setAttribute(attr, lowerMap.get(t.toLowerCase()));
-                        else if (/^Show\\s+(\\d+)\\s+more/i.test(t)) {
-                            const trans = t.replace(/^Show\\s+(\\d+)\\s+more(\\s+(results?|items?|commands?|options?))?(\\.\\.\\.|…)?$/i, (m, num, p2, type) => {
-                                if (type) {
-                                    if (/result/i.test(type)) return "显示另外 " + num + " 个结果...";
-                                    if (/command/i.test(type)) return "显示另外 " + num + " 个命令...";
-                                    if (/item/i.test(type)) return "显示另外 " + num + " 个项目...";
-                                    if (/option/i.test(type)) return "显示另外 " + num + " 个选项...";
-                                }
-                                return "显示另外 " + num + " 个...";
-                            });
-                            node.setAttribute(attr, trans);
-                        }
-                    }
-                }
-
-                if (node.shadowRoot) translateNode(node.shadowRoot);
-                for (const child of node.childNodes) translateNode(child);
-
-            } else if (node.nodeType === Node.TEXT_NODE) {
-                if (isProtectedZone(node)) return;
-
-                let originalVal = node.nodeValue;
-                if (!originalVal || originalVal.trim().length < 1) return;
-
-                // 核心：如果是 skeleton 骨架占位文本，强制打上不翻译标记，防止自动翻译（例如 Google Translate 网页翻译）将其翻译为“装。资料。包装。资料。”
-                if (originalVal.toLowerCase().includes('pack.info')) {
-                    const parent = node.parentElement;
-                    if (parent) {
-                        if (parent.getAttribute('translate') !== 'no') {
-                            parent.setAttribute('translate', 'no');
-                        }
-                        try {
-                            if (!parent.classList.contains('notranslate')) {
-                                parent.classList.add('notranslate');
-                            }
-                        } catch (e) {}
-                    }
-                    return;
-                }
-
-                if (translatedValues.get(node) === originalVal) return;
-
-                let newVal = originalVal;
-                const valNorm = norm(originalVal);
-                const valLower = valNorm.toLowerCase();
-                
-                // 1. 精确匹配（含大小写自动纠正与快捷键检测）
-                const shortcutTrans = translateWithShortcut(valNorm);
-                if (shortcutTrans) {
-                    newVal = shortcutTrans;
-                } else if (map.has(valNorm)) {
-                    newVal = map.get(valNorm);
-                } else if (lowerMap.has(valLower)) {
-                    newVal = lowerMap.get(valLower);
-                } else if (/^The AlloyDB for PostgreSQL remote/i.test(valNorm)) {
-                    newVal = "AlloyDB for PostgreSQL 远程 MCP 服务器可让您访问并运行 AlloyDB 工具，用于管理 AlloyDB 集群及实例、管理用户，以及创建和恢复数据备份。";
-                } else if (/^The Cloud SQL remote/i.test(valNorm)) {
-                    newVal = "Cloud SQL 远程 MCP 服务器可让您访问并运行 Cloud SQL 工具，用于管理 Cloud SQL 实例、管理用户、创建和恢复数据备份及数据库运维。";
-                } else if (/^The Spanner remote/i.test(valNorm)) {
-                    newVal = "Spanner 远程 MCP 服务器可让您从 AI 开发环境中访问并运行 Spanner 工具，以创建、管理和查询分布式数据库资源。";
-                } else if (/^Ask questions\.\s*Get answers\./i.test(valNorm) || /PostHog data/i.test(valNorm)) {
-                    newVal = "提问，即得答案。该 MCP 是供您的编程智能体调用的服务器。用英语提出问题，它会针对您的 PostHog 数据运行查询，结果将直接呈现在您的编辑器中。";
-                } else if (/^The GKE remote MCP server/i.test(valNorm)) {
-                    newVal = "GKE 远程 MCP 服务器提供对 GKE Kubernetes 资源的读写权限。允许 AI 智能体检查并监控您的运行环境。";
-                } else if (/^Cloud CLI MCP Server/i.test(valNorm)) {
-                    newVal = "Cloud CLI MCP 服务器提供在远程沙箱环境中运行 gcloud 与 bq CLI 命令的工具集。";
-                } else if (/^The Apigee API hub remote MCP server/i.test(valNorm)) {
-                    newVal = "Apigee API hub 远程 MCP 服务器可让您管理注册在 Apigee API hub 中的 API、版本、规范、操作、部署、属性、外部 API 以及依赖项。";
-                } else if (/^The Google Home Developer MCP server/i.test(valNorm)) {
-                    newVal = "Google Home Developer MCP 服务器支持检索 Google Home 文档、OpenThread 与 Matter 规范文档。";
-                } else if (/^The Cloud Quotas MCP server/i.test(valNorm)) {
-                    newVal = "Cloud Quotas MCP 服务器支持查看配额分配、申请提升配额以及管理 Quota Adjuster 自动调整配置。";
-                } else if (/^Build, edit, deploy, and manage full-stack web apps with Lovable/i.test(valNorm)) {
-                    newVal = "使用自然语言，借助 AI 应用构建工具 Lovable 构建、编辑、部署和管理全栈 Web 应用。该 MCP 服务器将您的 AI 客户端连接至 Lovable，允许您的 AI 智能体直接在偏好的编辑器或助手中交互、创建和管理 Lovable 项目。";
-                } else if (/^Build applications with the Gemini Interactions API and Live API/i.test(valNorm)) {
-                    newVal = "使用 Gemini Interactions API 和 Live API 构建应用，涵盖文本生成、多轮对话、流式传输、函数调用、托管智能体以及实时音视频交互。";
-                } else if (/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in (\\d+) days?, (\\d+) hours?\\.?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in (\\d+) days?, (\\d+) hours?\\.?$/i, (match, d, h) => {
-                        return d + " 天 " + h + " 小时后刷新";
-                    });
-                } else if (/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in (\\d+) hours?, (\\d+) minutes?\\.?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in (\\d+) hours?, (\\d+) minutes?\\.?$/i, (match, h, m) => {
-                        return h + " 小时 " + m + " 分钟后刷新";
-                    });
-                } else if (/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in (\\d+) days?\\.?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in (\\d+) days?\\.?$/i, (match, d) => {
-                        return d + " 天后刷新";
-                    });
-                } else if (/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in (\\d+) hours?\\.?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in (\\d+) hours?\\.?$/i, (match, h) => {
-                        return h + " 小时后刷新";
-                    });
-                } else if (/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in (\\d+) minutes?\\.?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in (\\d+) minutes?\\.?$/i, (match, m) => {
-                        return m + " 分钟后刷新";
-                    });
-                } else if (/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in less than a minute\\.?$/i.test(valNorm)) {
-                    newVal = "不到 1 分钟后刷新";
-                } else if (/^(?:Refreshes|You have (?:used (?:some|all) of|reached) your (?:weekly|5-hour) limit, it will fully refresh) in a few seconds\\.?$/i.test(valNorm)) {
-                    newVal = "几秒后刷新";
-                } else if (/^Learn more about$/i.test(valNorm)) {
-                    newVal = "了解更多关于";
-                } else if (/^Learn more about (.+)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Learn more about (.+)$/i, (match, p) => {
-                        let translatedPreset = p;
-                        const pLow = p.toLowerCase();
-                        if (pLow === 'default' || pLow.includes('默认')) translatedPreset = "默认 (Default)";
-                        else if (pLow === 'full machine' || pLow.includes('全机')) translatedPreset = "全机访问 (Full Machine)";
-                        else if (pLow === 'turbo mode' || pLow.includes('极速')) translatedPreset = "极速模式 (Turbo Mode)";
-                        else if (pLow === 'custom' || pLow.includes('自定义')) translatedPreset = "自定义 (Custom)";
-                        return "了解更多关于 " + translatedPreset + " 的信息";
-                    });
-                } else if (/^Yes, and always allow '(.+)' in this project$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Yes, and always allow '(.+)' in this project$/i, (match, cmd) => {
-                        return "是，且在此项目中始终允许运行 '" + cmd + "'";
-                    });
-                } else if (/^Yes, and always allow '(.+)'$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Yes, and always allow '(.+)'$/i, (match, cmd) => {
-                        return "是，且始终允许运行 '" + cmd + "'";
-                    });
-                } else if (/^(\\d+) tools? enabled$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+) tools? enabled$/i, (match, num) => {
-                        return num + " 个工具已启用";
-                    });
-                } else if (/^including\\s+(\\d+)\\s+active conversations?([.。])?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^including\\s+(\\d+)\\s+active conversations?([.。])?$/i, (match, num, punct) => {
-                        const p = punct ? "。" : "";
-                        return "（包含 " + num + " 个活跃会话）" + p;
-                    });
-                } else if (/^(Permanently delete\\s+)?(.+?)\\s+including\\s+(\\d+)\\s+active conversations?([.。])?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(Permanently delete\\s+)?(.+?)\\s+including\\s+(\\d+)\\s+active conversations?([.。])?$/i, (match, del, proj, num, punct) => {
-                        const prefix = del ? "永久删除 " : "";
-                        const p = punct ? "。" : "";
-                        return prefix + proj + "（包含 " + num + " 个活跃会话）" + p;
-                    });
-                } else if (/^Show\\s+(\\d+)\\s+more(\\s+(results?|items?|commands?|options?))?(\\.\\.\\.|…)?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Show\\s+(\\d+)\\s+more(\\s+(results?|items?|commands?|options?))?(\\.\\.\\.|…)?$/i, (match, num, p2, type) => {
-                        if (type) {
-                            if (/result/i.test(type)) return "显示另外 " + num + " 个结果...";
-                            if (/command/i.test(type)) return "显示另外 " + num + " 个命令...";
-                            if (/item/i.test(type)) return "显示另外 " + num + " 个项目...";
-                            if (/option/i.test(type)) return "显示另外 " + num + " 个选项...";
-                        }
-                        return "显示另外 " + num + " 个...";
-                    });
-                } else if (/^See all\\s*\\((\\d+)\\)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^See all\\s*\\((\\d+)\\)$/i, (match, num) => {
-                        return "显示全部 (" + num + ")";
-                    });
-                } else if (/^Available AI Credits: (\\d+)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Available AI Credits: (\\d+)$/i, (match, num) => {
-                        return "可用 AI 额度: " + num;
-                    });
-                } else if (/^Version\\s+([\\d\\.]+)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Version\\s+([\\d\\.]+)$/i, (match, v) => {
-                        return "版本 " + v;
-                    });
-                } else if (/^(\\d+)(s|m|h|d|w|mo|yr)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(\\d+)(s|m|h|d|w|mo|yr)$/i, (match, num, unit) => {
-                        const unitLower = unit.toLowerCase();
-                        let unitStr = "";
-                        if (unitLower === "s") unitStr = "秒前";
-                        else if (unitLower === "m") unitStr = "分钟前";
-                        else if (unitLower === "h") unitStr = "小时前";
-                        else if (unitLower === "d") unitStr = "天前";
-                        else if (unitLower === "w") unitStr = "周前";
-                        else if (unitLower === "mo") unitStr = "个月前";
-                        else if (unitLower === "yr") unitStr = "年前";
-                        return num + unitStr;
-                    });
-                } else if (/^(.+?): context deadline exceeded$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(.+?): context deadline exceeded$/i, (match, prefix) => {
-                        return prefix + ": 请求超时 (context deadline exceeded)";
-                    });
-                } else if (/^(.+?): i\\/o timeout$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^(.+?): i\\/o timeout$/i, (match, prefix) => {
-                        return prefix + ": I/O 超时 (i/o timeout)";
-                    });
-                } else if (/^Are you sure you want to delete (the |this )?project (.+?)\\??$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Are you sure you want to delete (the |this )?project (.+?)\\??$/i, (match, article, name) => {
-                        return "您确定要删除项目 " + name + " 吗？";
-                    });
-                } else if (/^The (.+?) remote MCP server lets you access and run (.+?) tools to (.+)$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^The (.+?) remote MCP server lets you access and run (.+?) tools to (.+)$/i, (match, name, tools, action) => {
-                        return name + " 远程 MCP 服务器可让您访问并运行 " + tools + " 工具以进行管理与操作。";
-                    });
-                } else if (/^The (.+?) remote MCP server lets you manage (.+) resources\\.?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^The (.+?) remote MCP server lets you manage (.+) resources\\.?$/i, (match, name, res) => {
-                        return name + " 远程 MCP 服务器可让您管理 " + res + " 资源。";
-                    });
-                } else if (/^Send feedback as(\\s+(.+))?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Send feedback as(\\s+(.+))?$/i, (match, p1, email) => {
-                        if (email) {
-                            return "以 " + email + " 身份发送反馈";
-                        }
-                        return "以如下身份发送反馈：";
-                    });
-                } else {
-                    // 2. 长句子串滑动替换与前缀截断智能匹配 (缩短至前 18 字符即可高精度命中)
-                    for (const [key, translated] of longEntries) {
-                        if (key.length > 15 && valNorm.includes(key)) {
-                            newVal = newVal.split(key).join(translated);
-                            break;
-                        } else if (key.length >= 18 && valNorm.length >= 18 && valLower.slice(0, 18) === key.slice(0, 18).toLowerCase()) {
-                            newVal = translated;
-                            break;
-                        }
-                    }
-                }
-
-                if (newVal !== originalVal) {
-                    translatedValues.set(node, newVal);
-                    node.nodeValue = newVal;
-                }
-            }
-        } catch (e) {}
-    }
-
-    const observer = new MutationObserver(mutations => {
-        for (const m of mutations) {
-            if (m.type === 'childList') {
-                for (const n of m.addedNodes) translateNode(n);
-            } else if (m.type === 'characterData') {
-                translateNode(m.target);
-            }
-        }
-    });
-
-    const obsOpts = { childList: true, subtree: true, characterData: true };
-
-    const startEngine = () => {
-        const target = document.body || document.documentElement;
-        if (target) {
-            try {
-                observer.observe(target, obsOpts);
-                translateNode(target);
-            } catch (e) {}
-        }
-    };
-
-    const origAttachShadow = Element.prototype.attachShadow;
-    Element.prototype.attachShadow = function() {
-        const sr = origAttachShadow.apply(this, arguments);
-        try { observer.observe(sr, obsOpts); } catch(e) {}
-        return sr;
-    };
-
-    // 强力多阶段触发绑定
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', startEngine);
-    } else {
-        startEngine();
-    }
-    window.addEventListener('load', startEngine);
-    setTimeout(startEngine, 100);
-    setTimeout(startEngine, 300);
-    setTimeout(startEngine, 1000);
-    setTimeout(startEngine, 3000);
-    setTimeout(startEngine, 6000);
-})();
-${SIGNATURE_END}`;
-
-    return jsSource.replace("DICT_PLACEHOLDER", dictJson).replace("REPLACEMENT_ENTRIES_PLACEHOLDER", entriesJson);
-}
-
-function cleanJsContent(content) {
-    const regex = new RegExp(escapeRegExp(SIGNATURE_START) + "[\\s\\S]*?" + escapeRegExp(SIGNATURE_END), "g");
+/** 清理旧版本注入到 preload.js 的 DOM 级汉化脚本（当前版本不再注入该层） */
+function cleanLegacyDomLayer(content) {
+    const regex = new RegExp(escapeRegExp(LEGACY_DOM_SIGNATURE_START) + "[\\s\\S]*?" + escapeRegExp(LEGACY_DOM_SIGNATURE_END), "g");
     return content.replace(regex, "");
 }
 
@@ -846,24 +396,15 @@ function install20(resourcesDir) {
         return false;
     }
 
-    // 3. 注入 preload.js
+    // 3. preload.js：不再注入 DOM 级汉化脚本；若包里还残留旧版本注入的脚本则清理掉
     const preloadPath = path.join(tempDir, "dist", "preload.js");
-    if (!fs.existsSync(preloadPath)) {
-        console.error(`[错误] 解压后未能在指定路径找到 preload.js: ${preloadPath}`);
-        fs.rmSync(tempDir, { recursive: true, force: true });
-        return false;
+    if (fs.existsSync(preloadPath)) {
+        const content = fs.readFileSync(preloadPath, 'utf-8');
+        if (content.includes(LEGACY_DOM_SIGNATURE_START)) {
+            fs.writeFileSync(preloadPath, cleanLegacyDomLayer(content), 'utf-8');
+            console.log(`[清理] 已移除 preload.js 中旧版本的 DOM 级汉化脚本。`);
+        }
     }
-
-    console.log(`[修改] 正在向 preload.js 注入汉化代码...`);
-    let content = fs.readFileSync(preloadPath, 'utf-8');
-
-    // 清理已有的汉化，重新注入
-    const cleanedContent = cleanJsContent(content);
-    const translationJs = generateJs();
-    const newContent = cleanedContent + "\n" + translationJs;
-
-    fs.writeFileSync(preloadPath, newContent, 'utf-8');
-    console.log(`[修改] 注入成功！`);
 
     // 3.1 注入 menu.js (系统菜单汉化)
     const menuPath = path.join(tempDir, "dist", "menu.js");
@@ -1084,118 +625,6 @@ function restore20(resourcesDir) {
 }
 
 // ==========================================
-// Antigravity 1.0 汉化引擎 (旧版 HTML 注入模式)
-// ==========================================
-const OLD_TARGET_FILES = [
-    path.join("resources", "app", "out", "vs", "code", "electron-browser", "workbench", "workbench-jetski-agent.html"),
-    path.join("resources", "app", "out", "vs", "code", "electron-browser", "workbench", "workbench.html")
-];
-
-function backupFiles10(installDir) {
-    for (const relPath of OLD_TARGET_FILES) {
-        const absPath = path.join(installDir, relPath);
-        const bakPath = absPath + ".bak";
-        if (fs.existsSync(absPath) && !fs.existsSync(bakPath)) {
-            fs.copyFileSync(absPath, bakPath);
-            console.log(`[备份] 已创建旧版 HTML 备份: ${path.basename(absPath)}.bak`);
-        }
-    }
-}
-
-function injectHtml10(installDir, htmlRelPath) {
-    const absPath = path.join(installDir, htmlRelPath);
-    if (!fs.existsSync(absPath)) return false;
-    
-    let content = fs.readFileSync(absPath, 'utf-8');
-    
-    const injectStr = '<script src="../../../../ag_agent_hanhua.js"></script>';
-    content = content.replace(/<script.*ag_agent_hanhua\.js.*><\/script>/g, '');
-    
-    if (content.includes('</body>')) {
-        content = content.replace('</body>', `${injectStr}</body>`);
-    } else {
-        content += injectStr;
-    }
-        
-    fs.writeFileSync(absPath, content, 'utf-8');
-    return true;
-}
-
-function updateChecksums10(installDir) {
-    const productJsonPath = path.join(installDir, "resources", "app", "product.json");
-    if (!fs.existsSync(productJsonPath)) return;
-    
-    const data = JSON.parse(fs.readFileSync(productJsonPath, 'utf-8'));
-    
-    for (const relPath of OLD_TARGET_FILES) {
-        const absPath = path.join(installDir, relPath);
-        if (fs.existsSync(absPath)) {
-            const key = relPath.replace(/\\/g, "/").replace("resources/app/out/", "");
-            
-            const fileBuffer = fs.readFileSync(absPath);
-            const hash = crypto.createHash('sha256').update(fileBuffer).digest();
-            data.checksums[key] = hash.toString('base64').replace(/=/g, '');
-        }
-    }
-    
-    fs.writeFileSync(productJsonPath, JSON.stringify(data, null, '\t'), 'utf-8');
-}
-
-function install10(installDir) {
-    console.log("====== 检测到 Antigravity 1.0 架构，正在使用 HTML 注入引擎 ======");
-    backupFiles10(installDir);
-    
-    // 生成单独的 js 汉化文件
-    const hanhuaJsPath = path.join(installDir, "resources", "app", "out", "ag_agent_hanhua.js");
-    fs.mkdirSync(path.dirname(hanhuaJsPath), { recursive: true });
-    
-    const jsContent = generateJs();
-    fs.writeFileSync(hanhuaJsPath, jsContent, 'utf-8');
-        
-    for (const html of OLD_TARGET_FILES) {
-        if (injectHtml10(installDir, html)) {
-            console.log(`[√] 注入成功: ${path.basename(html)}`);
-        }
-    }
-            
-    updateChecksums10(installDir);
-    resignAppOnMac(installDir);
-    console.log("[√] Antigravity 1.0 汉化部署完成！");
-    return true;
-}
-
-function restore10(installDir) {
-    console.log("====== 正在恢复 Antigravity 1.0 官方原版 ======");
-    let changed = false;
-    for (const relPath of OLD_TARGET_FILES) {
-        const absPath = path.join(installDir, relPath);
-        const bakPath = absPath + ".bak";
-        if (fs.existsSync(bakPath)) {
-            fs.copyFileSync(bakPath, absPath);
-            fs.unlinkSync(bakPath);
-            console.log(`[还原] 已恢复 HTML: ${path.basename(absPath)}`);
-            changed = true;
-        }
-    }
-    
-    const hanhuaJsPath = path.join(installDir, "resources", "app", "out", "ag_agent_hanhua.js");
-    if (fs.existsSync(hanhuaJsPath)) {
-        fs.unlinkSync(hanhuaJsPath);
-        console.log(`[还原] 已删除汉化脚本`);
-        changed = true;
-    }
-        
-    if (changed) {
-        updateChecksums10(installDir);
-        resignAppOnMac(installDir);
-        console.log("[√] 校验值已同步，1.0 软件恢复至原始状态。");
-    } else {
-        console.log("[!] 未找到 1.0 备份文件。");
-    }
-    return true;
-}
-
-// ==========================================
 // 入口
 // ==========================================
 function main() {
@@ -1213,6 +642,8 @@ function main() {
         } else if (args[i] === '--no-kill') {
             noKill = true;
         } else if (args[i] === '--brand-title') {
+            // 旧版 DOM 层的品牌名显示选项，已随 DOM 层移除；为兼容旧命令行这里只跳过参数
+            console.log("[提示] --brand-title 选项已移除（左上角品牌名保持官方英文），已忽略。");
             i++;
         }
     }
@@ -1256,20 +687,17 @@ function main() {
     const isV2 = fs.existsSync(asarPath);
     let success = false;
 
+    if (!isV2) {
+        console.error(`[错误] 未在 ${resourcesDir} 找到 app.asar。本汉化包仅支持 Antigravity 2.x（Electron 架构）。`);
+        process.exit(1);
+    }
+
     if (huifu) {
         console.log("====== 正在卸载中文汉化，恢复官方原版 ======");
-        if (isV2) {
-            success = restore20(resourcesDir);
-        } else {
-            success = restore10(installDir);
-        }
+        success = restore20(resourcesDir);
     } else {
         console.log("====== 正在安装 Antigravity 中文汉化 ======");
-        if (isV2) {
-            success = install20(resourcesDir);
-        } else {
-            success = install10(installDir);
-        }
+        success = install20(resourcesDir);
     }
 
     // 5. 校验通过且原来客户端在运行，则自动重新启动客户端

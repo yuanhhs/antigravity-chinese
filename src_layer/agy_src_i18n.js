@@ -17,7 +17,16 @@
  *
  * 安全阀：除 createElement children 之外，任何字符串只要在源码别处被当作“标识符”使用
  * （=== 比较、switch case、对象键、id/type/screen 等代码键的值、Map.get/includes 等查找实参），
- * 就不会在源码层翻译，留给 DOM 层处理。这样避免 title:"General" 这类既做显示又做路由键的字符串被改坏。
+ * 默认就不会在源码层翻译。这样避免 title:"General" 这类既做显示又做路由键的字符串被改坏。
+ *
+ * 字典值除了 "译文" / null（保留英文）/ ""（删除片段）之外，还可以写成对象来放宽安全阀：
+ *   { "zh": "通用", "scope": "all" }      —— 整包一致改名：源码里所有等于原文的字符串字面量都替换
+ *                                           （含 === 比较、case、Map 键、ER("General") 之类的调用实参），
+ *                                           适用于“既是展示文本又是路由键、且只在前端包内流转”的字符串
+ *   { "zh": "星期一", "scope": "display" } —— 只替换处于展示位置的字面量，即使它在别处被当作标识符使用；
+ *                                           比较 / 键名 / 代码键的值 / 普通调用实参 / 枚举映射表保持英文
+ *   可选限定："keys": ["label","text"] 只译这些属性名下的值（"children" 表示 createElement 子节点）；
+ *             "notWith": ["prefix"]   所在对象若含有这些兄弟属性则不译（例如既做标题又做查找键的注册表项）
  *
  * 模板字面量的字典键形如 "Allow ${0}?"，数字为插值表达式的序号；译文可重排或省略占位符。
  */
@@ -36,10 +45,21 @@ const STRONG_KEYS = new Set([
     'confirmText', 'cancelText', 'okText', 'buttonText', 'displayName', 'shortDisplayName',
     'shortDescription', 'longDescription', 'detail', 'summary', 'children', 'alt', 'noun', 'header',
     'headerTitle', 'dialogTitle', 'modalTitle', 'sectionTitle_display', 'groupTitle', 'tabTitle', 'pageTitle',
+    'shortLabel', 'sidebarLabel', 'groupName', 'emptyMessageSingular', 'emptyMessagePlural', 'paneLabel', 'prefix', 'headerText',
 ]);
 
+// 形如 xxxLabel / xxxTitle / xxxTooltip / xxxPlaceholder / xxxDescription / xxxHeading / xxxCaption / xxxHint 的键
+// 也视为强展示键（renameLabel / deleteTitle / projectSearchPlaceholder ...）；值仍需通过文本形态过滤
+const RE_STRONG_KEY_SUFFIX = /^[a-z][A-Za-z0-9]*(Label|Title|Subtitle|Tooltip|Placeholder|Description|Heading|Caption|Hint|Text|Message)$/;
+const NOT_STRONG_KEYS = new Set(['xLinkTitle', 'xlinkTitle', 'ariaLabelledBy', 'ariaDescribedBy', 'innerText', 'textContent', 'plainText', 'richText', 'rawText', 'fullText', 'selectedText', 'inputText', 'queryText', 'searchText', 'sourceText', 'originalText', 'currentText', 'previousText', 'newText', 'oldText']);
+function isStrongKey(k) {
+    if (STRONG_KEYS.has(k)) return true;
+    if (NOT_STRONG_KEYS.has(k) || WEAK_KEYS.has(k) || ENTITY_KEYS.has(k)) return false;
+    return RE_STRONG_KEY_SUFFIX.test(k);
+}
+
 // 实体标签键：值是 "workspace" / "Workspace" 这类单词，运行时拼进句子里，允许全小写
-const ENTITY_KEYS = new Set(['lowercase', 'lowercasePlural', 'capitalized', 'capitalizedPlural', 'singular', 'plural', 'workspaces', 'workspace']);
+const ENTITY_KEYS = new Set(['lowercase', 'lowercasePlural', 'capitalized', 'capitalizedPlural', 'singular', 'plural', 'workspaces', 'workspace', 'conversations', 'conversation']);
 
 // 即使同一字符串在别处被当作标识符使用，处于这些键下的值也肯定是展示文本
 const SAFE_KEYS = new Set([
@@ -56,7 +76,7 @@ const SAFE_KEYS = new Set([
 const WEAK_KEYS = new Set([
     'content', 'text', 'message', 'error', 'body', 'prompt', 'warning', 'info', 'note',
     'one', 'other', 'zero', 'two', 'few', 'many', // date-fns / 复数表
-    'name',
+    'name', 'group',
 ]);
 
 // 这些方法的字符串实参绝不是展示文本
@@ -120,9 +140,16 @@ function calleeInfo(call) {
     return { name: null, prop: null, obj: null };
 }
 
+const CREATE_ELEMENT_ALIASES = new Set(['createElement', 'element', 'jsx', 'jsxs', 'jsxDEV', '_jsx', '_jsxs']);
 function isCreateElementCall(node) {
     if (!node || node.type !== 'CallExpression') return false;
     const c = node.callee;
+    if (c.type === 'Identifier') {
+        // element("div", {className:"loading"}, "Loading...")：以裸函数形式调用的 createElement 别名，要求第二个参数是对象 / null
+        if (!CREATE_ELEMENT_ALIASES.has(c.name) || node.arguments.length < 2) return false;
+        const a1 = node.arguments[1];
+        return a1.type === 'ObjectExpression' || (a1.type === 'Literal' && a1.value === null);
+    }
     if (c.type !== 'MemberExpression' || c.computed) return false;
     const p = c.property;
     if (!(p.type === 'Identifier' && (p.name === 'createElement' || p.name === 'jsx' || p.name === 'jsxs' || p.name === 'jsxDEV'))) return false;
@@ -136,7 +163,7 @@ function isCreateElementCall(node) {
 
 const RE_URL = /^(https?:|mailto:|file:|data:|blob:|ws:|wss:|vscode:|chrome:|about:|\/\/)/i;
 const RE_EMAIL = /^[\w.+-]+@[\w.-]+\.\w+$/;
-const RE_HEX = /^#?[0-9a-fA-F]{3,8}$/;
+const RE_HEX = /^(#[0-9a-fA-F]{3,8}|[0-9a-f]{3,8}|[0-9A-F]{3,8})$/; // 不带 # 时要求大小写一致，避免把 "Add" / "Dead" 当成颜色值
 const RE_CSS_FN = /^(rgb|rgba|hsl|hsla|var|calc|url|translate[XYZ3d]*|scale[XYZ3d]*|rotate[XYZ3d]*|matrix3?d?|cubic-bezier|linear-gradient|radial-gradient|repeat|minmax|clamp|env)\(/i;
 const RE_UNIT = /^-?[\d.]+(px|em|rem|%|ms|s|vh|vw|vmin|vmax|deg|fr|ch|ex|pt)?$/;
 const RE_SVG_PATH = /^[MmLlHhVvCcSsQqTtAaZz][\d\s.,\-MmLlHhVvCcSsQqTtAaZz]*$/;
@@ -148,6 +175,7 @@ const RE_MIME = /^[a-z]+\/[a-z0-9.+*-]+$/;
 const RE_LOWER_IDENT = /^[a-z_$][\w$]*$/;
 const RE_TAILWIND_TOKEN = /^!?-?[a-z0-9]+(-[a-z0-9\[\]\/.%#,()!]+|:[a-z0-9\[\]\/.%#,()!:-]+)+$|^\[[^\]]+\]$|^[a-z0-9]+:[a-z0-9\[\]\/.%#,()!:-]+$/;
 const RE_PLACEHOLDER = /\$\{\d+\}/g;
+const RE_TITLE_WORD = /^[A-Z][a-z]{2,}(?: [a-z]+)?$/; // 单个 Title-case 词（"Ran" / "Projects" / "Stopped after"）
 
 /**
  * 判断一个字符串（模板键已把插值替换为 ${n}）在形态上是否像给用户看的文本。
@@ -252,6 +280,10 @@ function collectLeaves(node, out, depth = 0) {
             return;
         case 'TemplateLiteral':
             out.push(node);
+            // `${cond ? "Stopped after" : "Worked for"} ${dur}`：插值里的条件分支文本也是展示文本
+            for (const ex of node.expressions) {
+                if (ex.type === 'ConditionalExpression' || ex.type === 'LogicalExpression' || ex.type === 'TemplateLiteral') collectLeaves(ex, out, depth + 1);
+            }
             return;
         case 'ConditionalExpression':
             collectLeaves(node.consequent, out, depth + 1);
@@ -295,11 +327,13 @@ function isChildNode(v) {
  */
 function analyze(ast, opts = {}) {
     const force = opts.force || null;
+    const displayScope = opts.displayScope || null; // Map<string, {keys:Set|null, notWith:Set|null}>：scope = "display" 的键
     const marked = new Map();           // node -> kind
     const identifierUse = new Set();
     const parentOf = new Map();
     const childrenLists = [];           // 每个 createElement 调用的 children 参数数组（用于复数后缀 "s" 的联动处理）
     const enumValueNodes = new Set();   // “枚举 -> 文案”映射表中的值节点：不计入标识符使用
+    const propInfo = new Map();         // 叶子节点 -> { propKey, siblings }：来自对象属性值的展示文本（供 keys / notWith 限定使用）
     const strictIdentifierUse = new Set(); // 仅由 === / switch / 计算属性 / 查找方法实参 / 对象键 得到的标识符（不含“单 token 实参”启发式）
 
     const mark = (node, kind) => {
@@ -309,6 +343,24 @@ function analyze(ast, opts = {}) {
     const markLeaves = (expr, kind) => {
         const leaves = []; collectLeaves(expr, leaves);
         for (const l of leaves) mark(l, kind);
+    };
+    // 对象字面量 / createElement props 中的展示型键
+    const markObjectProps = (obj) => {
+        let sib = null;
+        for (const pr of obj.properties) {
+            const k = getKeyName(pr);
+            if (!k) continue;
+            let kind = null;
+            if (ENTITY_KEYS.has(k)) kind = 'entity';
+            else if (SAFE_KEYS.has(k)) kind = 'safeprop';
+            else if (isStrongKey(k)) kind = 'prop';
+            else if (WEAK_KEYS.has(k)) kind = 'weakprop';
+            if (!kind) continue;
+            const leaves = []; collectLeaves(pr.value, leaves);
+            if (!leaves.length) continue;
+            if (!sib) sib = new Set(obj.properties.map(getKeyName).filter(Boolean));
+            for (const l of leaves) { mark(l, kind); if (!propInfo.has(l)) propInfo.set(l, { propKey: k, siblings: sib }); }
+        }
     };
     const addIdent = (n) => { if (isStringLiteral(n)) { identifierUse.add(n.value); strictIdentifierUse.add(n.value); } };
 
@@ -327,15 +379,15 @@ function analyze(ast, opts = {}) {
                 if (ci.prop && ERROR_CTORS.test(ci.prop)) return true;
                 if (ci.obj === 'console') return true;
                 if (ci.prop === 'setAttribute' && p.arguments.length >= 2 && p.arguments[1] === cur && isStringLiteral(p.arguments[0]) && SAFE_ATTRS.has(p.arguments[0].value)) return false;
-                if (ci.prop && NON_DISPLAY_METHODS.has(ci.prop)) return true;
                 if (isCreateElementCall(p)) return false;
+                if (ci.prop && NON_DISPLAY_METHODS.has(ci.prop)) return true;
                 if (p.type === 'CallExpression' && p.arguments.length >= 2 && isStringLiteral(p.arguments[0]) && p.arguments[0] !== cur && /^[\w.$-]+$/.test(p.arguments[0].value) && p.arguments.indexOf(cur) === 1) return true; // nls(key, text)
             }
             if (p.type === 'Property' && p.key === cur) return true;
             // 代码键（id/type/screen...）的直接值是标识符；但若属性值是函数（resolveOptionToDescription: b => "..."），其返回的文案仍是展示用途
             if (p.type === 'Property' && p.value === cur && !enumValueNodes.has(cur) && cur.type !== 'ArrowFunctionExpression' && cur.type !== 'FunctionExpression') {
                 const k = getKeyName(p);
-                if (k && !STRONG_KEYS.has(k) && !WEAK_KEYS.has(k) && !SAFE_KEYS.has(k) && !ENTITY_KEYS.has(k)) return true;
+                if (k && !isStrongKey(k) && !WEAK_KEYS.has(k) && !SAFE_KEYS.has(k) && !ENTITY_KEYS.has(k)) return true;
             }
             if (p.type === 'MemberExpression' && p.computed && p.property === cur) return true;
             if (p.type === 'ImportExpression') return true;
@@ -361,7 +413,7 @@ function analyze(ast, opts = {}) {
             if (node.key.type === 'Identifier') { identifierUse.add(node.key.name); strictIdentifierUse.add(node.key.name); }
             else addIdent(node.key);
             const k = getKeyName(node);
-            if (k && !STRONG_KEYS.has(k) && !WEAK_KEYS.has(k) && !SAFE_KEYS.has(k) && !ENTITY_KEYS.has(k) && !enumValueNodes.has(node.value)) addIdent(node.value);
+            if (k && !isStrongKey(k) && !WEAK_KEYS.has(k) && !SAFE_KEYS.has(k) && !ENTITY_KEYS.has(k) && !enumValueNodes.has(node.value)) addIdent(node.value);
         } else if (node.type === 'CallExpression' && !isCreateElementCall(node)) {
             const ci = calleeInfo(node);
             const lookupish = ci.prop && LOOKUP_METHODS.has(ci.prop);
@@ -379,16 +431,7 @@ function analyze(ast, opts = {}) {
         if (node.type === 'CallExpression') {
             if (isCreateElementCall(node)) {
                 const props = node.arguments[1];
-                if (props && props.type === 'ObjectExpression') {
-                    for (const pr of props.properties) {
-                        const k = getKeyName(pr);
-                        if (!k) continue;
-                        if (ENTITY_KEYS.has(k)) markLeaves(pr.value, 'entity');
-                        else if (SAFE_KEYS.has(k)) markLeaves(pr.value, 'safeprop');
-                        else if (STRONG_KEYS.has(k)) markLeaves(pr.value, 'prop');
-                        else if (WEAK_KEYS.has(k)) markLeaves(pr.value, 'weakprop');
-                    }
-                }
+                if (props && props.type === 'ObjectExpression') markObjectProps(props);
                 for (let i = 2; i < node.arguments.length; i++) markLeaves(node.arguments[i], 'children');
                 if (node.arguments.length > 3) childrenLists.push(node.arguments.slice(2));
             } else {
@@ -397,30 +440,30 @@ function analyze(ast, opts = {}) {
                     markLeaves(node.arguments[1], 'safeprop');
                 }
                 const blocked = (ci.obj === 'console') || (ci.prop && NON_DISPLAY_METHODS.has(ci.prop)) || (ci.name && ERROR_CTORS.test(ci.name)) || (ci.prop && ERROR_CTORS.test(ci.prop));
+                if (blocked && (ci.prop === 'push' || ci.prop === 'unshift')) {
+                    // parts.push(`${c ? "Exploring" : "Explored"} ${f}`)：拼装摘要句子的常见写法，模板实参按展示处理
+                    for (const a of node.arguments) if (a.type === 'TemplateLiteral' && a.expressions.length > 0) markLeaves(a, 'template');
+                }
                 if (!blocked) {
                     const nlsLike = node.arguments.length >= 2 && isStringLiteral(node.arguments[0]) && /^[\w.$-]+$/.test(node.arguments[0].value);
                     node.arguments.forEach((a, idx) => {
                         if (nlsLike && idx === 1) return;
                         if (isStringLiteral(a) || a.type === 'TemplateLiteral') {
                             if (!marked.has(a)) mark(a, 'callarg');
+                        } else if (a.type === 'ConditionalExpression' || a.type === 'LogicalExpression') {
+                            const leaves = []; collectLeaves(a, leaves);
+                            for (const l of leaves) if (!marked.has(l)) mark(l, 'callarg');
                         }
                     });
                 }
             }
         } else if (node.type === 'ObjectExpression') {
-            for (const pr of node.properties) {
-                const k = getKeyName(pr);
-                if (!k) continue;
-                if (ENTITY_KEYS.has(k)) markLeaves(pr.value, 'entity');
-                else if (SAFE_KEYS.has(k)) markLeaves(pr.value, 'safeprop');
-                else if (STRONG_KEYS.has(k)) markLeaves(pr.value, 'prop');
-                else if (WEAK_KEYS.has(k)) markLeaves(pr.value, 'weakprop');
-            }
+            markObjectProps(node);
             // 枚举 -> 文案 映射表：所有值都是字符串，且多数为 Title-case 文本
             const props = node.properties.filter(p => p.type === 'Property');
             if (props.length >= 2 && props.length === node.properties.length && props.every(p => isStringLiteral(p.value))) {
                 const keys = props.map(getKeyName);
-                if (!keys.some(k => k && (STRONG_KEYS.has(k) || WEAK_KEYS.has(k) || k === 'className' || k === 'style'))) {
+                if (!keys.some(k => k && (isStrongKey(k) || WEAK_KEYS.has(k) || k === 'className' || k === 'style'))) {
                     const vals = props.map(p => p.value.value);
                     const good = vals.filter(isTitleCaseText).length;
                     if (good >= Math.max(2, Math.ceil(vals.length * 0.6))) {
@@ -434,6 +477,23 @@ function analyze(ast, opts = {}) {
             markLeaves(node.argument, 'return');
         } else if (node.type === 'ArrowFunctionExpression' && node.expression && node.body) {
             markLeaves(node.body, 'return');
+        } else if ((node.type === 'VariableDeclarator' && node.init) || (node.type === 'AssignmentExpression' && node.operator === '=' && node.left.type === 'Identifier')) {
+            // let vK = "Terminal input" / h = "Open Project Picker" 这类先存到变量再渲染的句子
+            // （要求多词且像句子，避免误伤代码常量；单词 / 无空格的值一律不算）
+            const init = node.type === 'VariableDeclarator' ? node.init : node.right;
+            const leaves = []; if (init.type !== 'ArrayExpression') collectLeaves(init, leaves);
+            for (const l of leaves) {
+                if (!isStringLiteral(l)) { if (l.type === 'TemplateLiteral' && l.expressions.length > 0 && !marked.has(l)) mark(l, 'template'); continue; }
+                const t = l.value.trim();
+                if (((/\s/.test(t) && (/^[A-Z]/.test(t) || /[.!?…]$/.test(t))) || RE_TITLE_WORD.test(t)) && !marked.has(l)) mark(l, 'return');
+            }
+        } else if (node.type === 'AssignmentPattern' && isStringLiteral(node.right)) {
+            // 解构默认值：({ label: g = "Scroll to Bottom" }) / confirmLabel: h = "Install"
+            const p = parentOf.get(node);
+            const k = p && p.type === 'Property' ? getKeyName(p) : null;
+            if (k && (isStrongKey(k) || SAFE_KEYS.has(k))) { mark(node.right, SAFE_KEYS.has(k) ? 'safeprop' : 'prop'); if (!propInfo.has(node.right)) propInfo.set(node.right, { propKey: k, siblings: new Set() }); }
+            else if (k && WEAK_KEYS.has(k)) mark(node.right, 'weakprop');
+            else { const t = node.right.value.trim(); if ((/\s/.test(t) && /^[A-Z]/.test(t)) || RE_TITLE_WORD.test(t)) mark(node.right, 'return'); }
         } else if (node.type === 'TemplateLiteral' && node.expressions.length > 0) {
             if (!marked.has(node)) mark(node, 'template');
         }
@@ -452,6 +512,7 @@ function analyze(ast, opts = {}) {
 
     // ---- 二次过滤：文本形态 + 上下文排除 + 标识符冲突 ----
     const result = new Map();
+    const blocked = new Map();          // 处于展示位置、但因在别处被当作标识符而未译的键 -> kinds
     for (const [node, kind] of marked) {
         const key = node.type === 'TemplateLiteral' ? templateKey(node) : node.value;
         if (kind === 'template' || kind === 'callarg' || kind === 'weakprop' || kind === 'return' || kind === 'enummap') {
@@ -471,15 +532,32 @@ function analyze(ast, opts = {}) {
             if (kind === 'weakprop' && !isSentenceLike(key) && !/\s/.test(key.trim())) continue;
             if (kind === 'return') {
                 const t = key.trim();
-                if (!(/\s/.test(t) && (/^[A-Z]/.test(t) || /[.!?…]$/.test(t)))) continue;
+                if (!((/\s/.test(t) && (/^[A-Z]/.test(t) || /[.!?…]$/.test(t))) || RE_TITLE_WORD.test(t))) continue;
             }
             if (kind === 'template' && !/[A-Za-z]{2,}/.test(key.replace(RE_PLACEHOLDER, ''))) continue;
         }
-        // children 位置的节点只承担显示职责，替换绝对安全；其余类型若该字符串在别处被当作标识符使用，则交给 DOM 层处理
-        if (kind !== 'children' && kind !== 'safeprop' && kind !== 'entity' && identifierUse.has(key) && !(kind === 'enummap' && !strictIdentifierUse.has(key))) continue;
+        // children 位置的节点只承担显示职责，替换绝对安全；其余类型若该字符串在别处被当作标识符使用，默认不译。
+        // 字典里标为 scope:"display" 的键可以放宽（普通调用实参除外：nsb("Files") 这类可能是查找键）
+        if (kind !== 'children' && kind !== 'safeprop' && kind !== 'entity' && identifierUse.has(key) && !(kind === 'enummap' && !strictIdentifierUse.has(key))) {
+            if (!(displayScope && displayScope.has(key)) || kind === 'callarg' || kind === 'enummap') {
+                if (!blocked.has(key)) blocked.set(key, new Set());
+                blocked.get(key).add(kind);
+                continue;
+            }
+        }
+        // scope:"display" 的 keys / notWith 限定
+        if (displayScope && displayScope.has(key)) {
+            const ds = displayScope.get(key);
+            const info = propInfo.get(node);
+            if (ds.keys) {
+                const pk = info ? info.propKey : (kind === 'children' ? 'children' : null);
+                if (!pk || !ds.keys.has(pk)) continue;
+            }
+            if (ds.notWith && info && [...ds.notWith].some(sk => info.siblings.has(sk))) continue;
+        }
         result.set(node, { kind, key });
     }
-    return { marked: result, identifierUse, parentOf, childrenLists };
+    return { marked: result, identifierUse, parentOf, childrenLists, blocked };
 }
 
 function parse(src) {
@@ -500,15 +578,38 @@ function parse(src) {
 function extract(src, opts = {}) {
     const sampleLen = opts.sampleLen || 90;
     const ast = parse(src);
-    const { marked, identifierUse } = analyze(ast, { force: opts.force || null });
+    const lookup = opts.dict ? normalizeDict(opts.dict) : new Map();
+    const { displayScope, allScope } = scopesOf(lookup);
+    const { marked, identifierUse, blocked } = analyze(ast, { force: opts.force || null, displayScope });
     const byKey = new Map();
+    const addSample = (e, node) => {
+        if (e.samples.length < 2) e.samples.push(src.slice(Math.max(0, node.start - sampleLen), Math.min(src.length, node.end + sampleLen)).replace(/\s+/g, ' '));
+    };
     for (const [node, { kind, key }] of marked) {
         let e = byKey.get(key);
         if (!e) { e = { key, kinds: new Set(), count: 0, samples: [] }; byKey.set(key, e); }
         e.kinds.add(kind);
         e.count++;
-        if (e.samples.length < 2) {
-            e.samples.push(src.slice(Math.max(0, node.start - sampleLen), Math.min(src.length, node.end + sampleLen)).replace(/\s+/g, ' '));
+        addSample(e, node);
+    }
+    // scope:"all" 的键：统计整包内的全部字面量出现次数，并检查无法一致改名的位置（标识符键名 / 非计算成员名）
+    const conflicts = new Map();
+    if (allScope.size) {
+        for (const node of allLiteralNodes(ast, allScope)) {
+            const key = node.value;
+            let e = byKey.get(key);
+            if (!e) { e = { key, kinds: new Set(), count: 0, samples: [] }; byKey.set(key, e); }
+            e.kinds.add('all'); e.count++; addSample(e, node);
+        }
+        for (const [key, where] of findRenameConflicts(ast, allScope)) conflicts.set(key, where);
+        for (const { tokens, sep } of splitListLiterals(ast, allScope)) {
+            for (const t of new Set(tokens)) {
+                if (!allScope.has(t)) continue;
+                const zh = lookup.get(t).zh;
+                const note = zh && zh.includes(sep) ? `split-list-unsafe(sep=${JSON.stringify(sep)})` : 'split-list';
+                if (!conflicts.has(t)) conflicts.set(t, []);
+                conflicts.get(t).push(note);
+            }
         }
     }
     const items = [];
@@ -518,7 +619,109 @@ function extract(src, opts = {}) {
     items.sort((a, b) => a.key.localeCompare(b.key));
     const stats = { nodes: marked.size, unique: items.length, byKind: {} };
     for (const it of items) for (const k of it.kinds) stats.byKind[k] = (stats.byKind[k] || 0) + 1;
-    return { items, stats };
+    return { items, stats, conflicts, blocked };
+}
+
+/** 从规范化字典中取出 scope 信息：displayScope: Map<key,{keys,notWith}>，allScope: Set<key> */
+function scopesOf(lookup) {
+    const displayScope = new Map(); const allScope = new Set();
+    for (const [k, v] of lookup) {
+        if (typeof v.zh !== 'string' || v.zh === k) continue;
+        if (v.scope === 'display') displayScope.set(k, { keys: v.keys, notWith: v.notWith });
+        else if (v.scope === 'all') allScope.add(k);
+    }
+    return { displayScope, allScope };
+}
+
+/**
+ * "A B C".split(" ") 形式的列表字面量：scope:"all" 改名时其中的元素也要一起改，
+ * 否则 "General Appearance ...".split(" ") 产出的英文键会与已改名的比较位置对不上。
+ * 返回 [{ node: 被 split 的字符串字面量节点, sep, tokens }]
+ */
+function splitListLiterals(ast, keys) {
+    const out = [];
+    if (!keys.size) return out;
+    const stack = [ast];
+    while (stack.length) {
+        const node = stack.pop();
+        if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && !node.callee.computed
+            && node.callee.property.type === 'Identifier' && node.callee.property.name === 'split'
+            && isStringLiteral(node.callee.object) && node.arguments.length >= 1 && isStringLiteral(node.arguments[0]) && node.arguments[0].value) {
+            const sep = node.arguments[0].value;
+            const tokens = node.callee.object.value.split(sep);
+            if (tokens.length > 1 && tokens.some(t => keys.has(t))) out.push({ node: node.callee.object, sep, tokens });
+        }
+        for (const k in node) {
+            if (k === 'type' || k === 'start' || k === 'end' || k === 'loc' || k === 'range') continue;
+            const v = node[k];
+            if (Array.isArray(v)) { for (const c of v) if (isChildNode(c)) stack.push(c); }
+            else if (isChildNode(v)) stack.push(v);
+        }
+    }
+    return out;
+}
+
+/** 遍历 AST，返回值命中 keys 的全部字符串字面量节点（跳过 "use strict" 指令与 import/export 的模块路径） */
+function allLiteralNodes(ast, keys) {
+    const out = [];
+    const stack = [ast];
+    while (stack.length) {
+        const node = stack.pop();
+        if (node.type === 'ExpressionStatement' && node.directive) continue;
+        if (isStringLiteral(node) && keys.has(node.value)) out.push(node);
+        for (const k in node) {
+            if (k === 'type' || k === 'start' || k === 'end' || k === 'loc' || k === 'range') continue;
+            if (k === 'source' && (node.type === 'ImportDeclaration' || node.type === 'ExportAllDeclaration' || node.type === 'ExportNamedDeclaration')) continue;
+            const v = node[k];
+            if (Array.isArray(v)) { for (const c of v) if (isChildNode(c)) stack.push(c); }
+            else if (isChildNode(v)) stack.push(v);
+        }
+    }
+    return out;
+}
+
+/**
+ * scope:"all" 整包改名做不到的位置：以标识符形式出现的对象键（{General: ...}）、非计算成员访问（x.General）、
+ * 模板字面量的静态片段。这些位置不会被替换，需要维护者确认它们不与被改名的字符串值做比较。
+ */
+function findRenameConflicts(ast, keys) {
+    const res = new Map();
+    const add = (k, what) => { if (!res.has(k)) res.set(k, []); const a = res.get(k); if (a.length < 8) a.push(what); };
+    const wordRe = new Map();
+    for (const k of keys) wordRe.set(k, new RegExp('(^|[^A-Za-z0-9])' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[^A-Za-z0-9])'));
+    const stack = [ast];
+    while (stack.length) {
+        const node = stack.pop();
+        if (node.type === 'Property' && !node.computed && node.key.type === 'Identifier' && keys.has(node.key.name)) add(node.key.name, 'identifier-key');
+        if (node.type === 'MemberExpression' && !node.computed && node.property.type === 'Identifier' && keys.has(node.property.name)) add(node.property.name, 'member');
+        if (node.type === 'TemplateLiteral') for (const q of node.quasis) { const s = q.value.cooked || ''; for (const [k, re] of wordRe) if (re.test(s)) add(k, 'template-fragment: ' + s.slice(0, 60)); }
+        if (isStringLiteral(node) && !keys.has(node.value) && node.value.length < 200) { for (const [k, re] of wordRe) if (re.test(node.value)) add(k, 'literal-fragment: ' + node.value.slice(0, 60)); }
+        for (const k in node) {
+            if (k === 'type' || k === 'start' || k === 'end' || k === 'loc' || k === 'range') continue;
+            const v = node[k];
+            if (Array.isArray(v)) { for (const c of v) if (isChildNode(c)) stack.push(c); }
+            else if (isChildNode(v)) stack.push(v);
+        }
+    }
+    return res;
+}
+
+/** 把字典（值为 字符串 / null / "" / {zh, scope}）规范化为 Map<key, {zh, scope}> */
+function normalizeDict(dict) {
+    const out = new Map();
+    const entries = dict instanceof Map ? dict.entries() : Object.entries(dict);
+    for (const [k, v] of entries) {
+        if (v === null || v === undefined) { out.set(k, { zh: null, scope: null }); continue; }
+        if (typeof v === 'string') { out.set(k, { zh: v, scope: null }); continue; }
+        if (typeof v === 'object') {
+            const zh = typeof v.zh === 'string' ? v.zh : null;
+            const scope = v.scope === 'all' || v.scope === 'display' ? v.scope : null;
+            const keys = Array.isArray(v.keys) && v.keys.length ? new Set(v.keys) : null;
+            const notWith = Array.isArray(v.notWith) && v.notWith.length ? new Set(v.notWith) : null;
+            out.set(k, { zh, scope, keys, notWith });
+        }
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -538,25 +741,44 @@ function escapeTemplateChunk(s) {
  */
 function translateSource(src, dict, opts = {}) {
     const ast = parse(src);
-    const lookup = dict instanceof Map ? dict : new Map(Object.entries(dict));
+    const lookup = normalizeDict(dict);
     const force = new Set();
-    for (const [k, v] of lookup) if (typeof v === 'string') force.add(k);
-    const { marked, childrenLists } = analyze(ast, { force });
+    for (const [k, v] of lookup) if (typeof v.zh === 'string' && v.zh !== k) force.add(k);
+    const { displayScope, allScope } = scopesOf(lookup);
+    const { marked, childrenLists } = analyze(ast, { force, displayScope });
 
     const reps = [];
     const repNodes = new Set();
     const matchedKeys = new Set();
     const missing = new Map();
+    const pushRep = (node, key, zh) => {
+        if (repNodes.has(node)) return;
+        matchedKeys.add(key);
+        reps.push({ start: node.start, end: node.end, node, zh });
+        repNodes.add(node);
+    };
     for (const [node, { key }] of marked) {
-        const zh = lookup.get(key);
+        const v = lookup.get(key);
+        const zh = v ? v.zh : undefined;
         if (zh == null || zh === key) {
             if (opts.collectMissing) missing.set(key, (missing.get(key) || 0) + 1);
             continue;
         }
-        if (typeof zh !== 'string') continue;
-        matchedKeys.add(key);
-        reps.push({ start: node.start, end: node.end, node, zh });
-        repNodes.add(node);
+        pushRep(node, key, zh);
+    }
+    // scope:"all"：整包内所有等于原文的字符串字面量一致改名（含比较、case、Map 键、调用实参），
+    // 以及 "A B C".split(" ") 列表字面量里的对应元素
+    if (allScope.size) {
+        for (const node of allLiteralNodes(ast, allScope)) pushRep(node, node.value, lookup.get(node.value).zh);
+        for (const { node, sep, tokens } of splitListLiterals(ast, allScope)) {
+            if (repNodes.has(node)) continue;
+            const out = tokens.map(t => allScope.has(t) ? lookup.get(t).zh : t);
+            if (out.some((t, i) => t !== tokens[i] && t.includes(sep))) continue; // 译文含分隔符，改了会把列表拆坏
+            const keysHit = tokens.filter(t => allScope.has(t));
+            for (const k of keysHit) matchedKeys.add(k);
+            reps.push({ start: node.start, end: node.end, node, zh: out.join(sep) });
+            repNodes.add(node);
+        }
     }
 
     // 复数后缀联动：children 序列中形如  n," item",n===1?"":"s"  的 "s"/"es" 分支，
@@ -626,4 +848,4 @@ function translateSource(src, dict, opts = {}) {
     return { code, replaced, matchedKeys, missing };
 }
 
-module.exports = { extract, translateSource, looksLikeText, isSentenceLike, templateKey, STRONG_KEYS, WEAK_KEYS };
+module.exports = { extract, translateSource, normalizeDict, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };
