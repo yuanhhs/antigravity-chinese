@@ -1,14 +1,28 @@
-# Antigravity 2.0 智能编程中文语言包 & 汉化引擎
+# Antigravity 2.0 简体中文汉化语言包 & 注入引擎
 
-> **支持系统**：Windows & macOS (均已内置一键脚本)  
-> **匹配版本**：Antigravity v2.15.x（v2.12+ 兼容）  
-> **核心引擎**：Node.js (无需安装 Python，零依赖，极速极稳)  
-> **汉化范围**：包括软件界面、顶部系统菜单、任务栏右键菜单、加载动画、设置面板、新手引导及登录页。  
-> **注入原理**：**源码级汉化**——主进程拦截 language_server 下发的前端 bundle（`main.js`），用 AST 按语法位置精确替换界面文案字面量；不做 DOM 层的运行时文本替换，因此聊天内容、代码、文件名、终端输出永远不会被误翻；负责渲染聊天内容的第三方库（KaTeX 公式、Markdown 管线、diff 等）整段划为**保护区**，字典对其中的字符串一律不生效。绝不修改核心二进制，一键安装与完美还原。
+<p align="center">
+  <img src="./showimg/showmain.png" alt="Antigravity 中文化界面预览" width="85%" style="border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/yuanhhs/antigravity-chinese/releases/latest"><img src="https://img.shields.io/badge/Release-v2.15.1-brightgreen.svg?style=flat-square" alt="Release Version"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Antigravity-v2.15.1%20%28%E5%85%BC%E5%AE%B9%20v2.12%2B%29-blue.svg?style=flat-square" alt="Compatible Version"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-informational.svg?style=flat-square" alt="Platform Support"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Runtime-Node.js%20(Zero%20Dependency)-orange.svg?style=flat-square" alt="Runtime"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-purple.svg?style=flat-square" alt="License"></a>
+</p>
+
+---
+
+> [!NOTE]
+> **适用版本**：**Antigravity v2.15.1**（深度向下兼容 v2.12.x 及以上版本）  
+> **核心引擎**：纯原生 Node.js（无需 Python，零外部依赖，极速极稳）  
+> **覆盖范围**：涵盖主界面、系统菜单栏、托盘右键菜单、设置中心、智能体对话面板、新手引导及加载动画。  
+> **底层原理**：**源码级 AST 精准汉化**——在 Chrome DevTools Protocol 拦截层直接解析前端 bundle（`main.js`），按语法树定位并替换界面文案字面量；**会话框渲染库（KaTeX 公式 / Markdown 管线 / diff 等）设立独立沙箱保护区**，绝不触碰聊天记录、代码块、文件名与终端，确保零误伤、无污染、完美可逆。
+
+---
 
 ## 📸 汉化效果展示
-
-以下是部分功能板块的实际汉化效果展示，涵盖登录引导页、主编辑器界面与详细设置面板：
 
 ### 1. 欢迎页与登录新手引导
 ![欢迎页与登录新手引导](./showimg/showlogin.png)
@@ -21,178 +35,182 @@
 
 ---
 
-## 📂 项目文件结构
-- **`双击运行中文汉化工具.bat`** / **`.command`**：Windows / macOS 一键执行入口，运行后可选择“安装汉化”或“卸载还原官方英文”。
-- **`localization_engine.js`**：核心汉化逻辑，负责 app.asar 的解包、代码注入、重新打包以及 macOS 下的自动深度重签名。
-- **`dicts_src/`**：**源码级字典**。键是前端源码里的字面量原文（带插值的句子写作 `Allow ${0}?`），值为中文；值为 `null` 表示明确保留英文（专有名词、按键名等）。`70_v2.15.json` 是 2.15 版本补翻，`95_scoped_identifiers.json` 是“既做显示又做路由键”的字符串（带 `scope` 标记），`90_fixups.json` 是最终修正表。
-- **`src_layer/`**：源码级汉化运行时，安装时会被复制进 app.asar 的 `dist/agy_zh/`：`agy_src_i18n.js`（AST 提取/替换核心）、`bootstrap.js`（主进程拦截 `main.js`）、`acorn.js`（JS 解析器，MIT）。
-- **`terminology.js`**：术语策略（Git 术语保留英文、Review 统一译为“审核”等），安装时对字典译文统一后处理。
-- **`tools/extract_src_strings.js`**：**升级补翻工具**。从正在运行的 Antigravity 抓取当前版本的 `main.js`，与 `dicts_src/` 对比后生成“新版本待翻清单”。
+## ✨ 核心亮点
+
+* 🎯 **源码级 AST 精准替换**：抛弃旧时代的 DOM 暴力遍历与 MutationObserver 拦截，从源头解析前端 AST 语法树，精确定位 JSX children、标签属性（label、title、placeholder）与模板字符串，界面文案 100% 自然呈现。
+* 🛡️ **会话安全沙箱保护区**：将 KaTeX 数学公式渲染器、remark / rehype / micromark Markdown 解析管线、diff 比较器等第三方库整段划入**保护区**。区内既不提取词条也不做任何字面量改动，彻底杜绝公式字体报错（如 `Font metrics not found`）与排版变形。
+* 🔒 **代码与终端零误伤**：不碰聊天内容、代码高亮、控制台输出、文件树路径，彻底解决传统汉化插件容易把“代码/命令翻译掉”的行业痛点。
+* ⚡ **极速冷启动与智能缓存**：采用 `ETag + 字典哈希 + 核心引擎哈希` 多维缓存机制，首次解析后秒级落盘，二次启动完全零延迟。
+* 🤖 **AI 驱动敏捷维护**：首创结合 Antigravity 自身的 AI 协作补翻模式；附带 `tools/extract_src_strings.js` 自动化对比工具，软件升级后数秒内即可生成待翻清单。
+* 🍏 **跨平台与安全还原**：支持 Windows 与 macOS。一键安装脚本内置进程检测、自动备份原始 `app.asar.bak` 与 macOS 深度 Ad-hoc 自动重签名机制，卸载一键瞬间还原。
 
 ---
 
-## 🚀 极速使用指南
+## 📂 项目结构说明
 
-### 1. 获取汉化包代码（二选一）
-
-* **方法 A：直接下载 ZIP 压缩包（最便捷 📦）**
-  1. 点击页面右上角绿色的 **`Code`** 按钮。
-  2. 在下拉菜单中选择 **`Download ZIP`** 并下载。
-  3. 将下载好的压缩包**解压到您电脑本地的任意目录**（例如您的 `Downloads` 文件夹）。
-
-* **方法 B：通过 Git 命令行克隆（开发者推荐 💻）**
-  如果您本地安装了 Git，可以直接在终端运行克隆命令：
-  ```bash
-  # 如果您在国内，推荐使用下方代理加速克隆地址：
-  git clone https://mirror.ghproxy.com/https://github.com/qqxpee/antigravity2-cn.git
-  
-  # 如果您配置了全局代理，可直接使用官方地址：
-  git clone https://github.com/qqxpee/antigravity2-cn.git
-  ```
-
----
-
-### 2. 一键安装汉化
-1. **完全退出** Antigravity 编程软件。
-2. 进入您解压或克隆出来的 `antigravity2-cn` 文件夹：
-   - **Windows**：双击运行 **`双击运行中文汉化工具.bat`**。
-   - **macOS**：双击运行 **`双击运行中文汉化工具.command`**。
-3. 按提示选择 **[1] 安装中文汉化**（直接回车即可）。
-4. 运行完成后，重新启动 Antigravity 软件，即可畅享全中文界面！
-
-也可以直接用命令行运行引擎：
-
-```bash
-node localization_engine.js                       # 安装（自动探测安装目录）
-node localization_engine.js --install-dir <目录>  # 指定安装目录
-node localization_engine.js --huifu               # 卸载还原
+```plaintext
+antigravity-chinese/
+├── 双击运行中文汉化工具.bat      # Windows 一键执行入口（安装 / 卸载）
+├── 双击运行中文汉化工具.command  # macOS 一键执行入口（含权限提升与自动重签名）
+├── localization_engine.js      # 核心注入与解包打包引擎
+├── terminology.js              # 术语策略过滤器（保持 Git 英文规范、审校统一）
+├── README.md                   # 本说明文档
+├── dicts_src/                  # 源码级分层字典库
+│   ├── 00_common.json          # 全局通用高频词条
+│   ├── 10_settings_permissions.json # 设置中心与权限选项
+│   ├── 40_browser_terminal_files.json # 终端、浏览器与文件树
+│   ├── 50_agent_conversation.json # 智能体、对话与提示词
+│   ├── 60_misc_a.json          # 综合杂项 A
+│   ├── 61_misc_b.json          # 综合杂项 B
+│   ├── 70_v2.15.json           # v2.15.x 增量补翻词库
+│   ├── 90_fixups.json          # 最终人工修正与强制微调表
+│   └── 95_scoped_identifiers.json # 作用域路由标识符（带 scope 标记）
+├── src_layer/                  # 源码注入层运行时（安装时打包入 asar）
+│   ├── acorn.js                # 高性能 AST 语法解析器 (MIT)
+│   ├── agy_src_i18n.js         # AST 遍历、保护区判定与词条替换核心
+│   └── bootstrap.js            # 主进程 CDP Fetch 拦截钩子与缓存管理器
+└── tools/
+    └── extract_src_strings.js  # 自动化版本对比与待翻清单生成工具
 ```
 
 ---
 
-### 3. 一键卸载还原
-1. **完全退出** Antigravity 编程软件。
-2. 在当前文件夹下：
+## 🚀 极速安装指南
+
+### 1. 获取汉化包（推荐二选一）
+
+* **方式 A：下载 Release 压缩包（最便捷 📦）**
+  1. 前往 GitHub 的 [**Releases 发布页面**](https://github.com/yuanhhs/antigravity-chinese/releases)；
+  2. 下载最新的 `Antigravity-Chinese-v2.15.1.zip`；
+  3. 解压到本地任意目录（例如 `下载` 文件夹）。
+
+* **方式 B：通过 Git 命令行克隆（开发者推荐 💻）**
+  ```bash
+  git clone https://github.com/yuanhhs/antigravity-chinese.git
+  ```
+
+---
+
+### 2. 一键安装中文汉化
+
+1. **完全退出** Antigravity 软件（可在任务管理器或活动监视器中确认已退出）。
+2. 打开解压或克隆的文件夹：
    - **Windows**：双击运行 **`双击运行中文汉化工具.bat`**。
    - **macOS**：双击运行 **`双击运行中文汉化工具.command`**。
-3. 按提示选择 **[2] 卸载汉化，还原官方英文**。
-4. 运行完成后，软件将自动清除所有汉化注入，无痕恢复至官方原版英文状态。
+3. 终端弹出菜单后，输入 **`1`** 并按回车（默认即为安装）。
+4. 看到“汉化已完成”提示后，重新打开 Antigravity，即可畅享全中文界面！
+
+> [!TIP]
+> 高级用户也可以直接使用命令行调用引擎：
+> ```bash
+> node localization_engine.js                       # 自动探测安装路径并安装
+> node localization_engine.js --install-dir <路径>   # 手动指定 Antigravity 安装目录
+> node localization_engine.js --huifu               # 卸载还原官方原版英文
+> ```
 
 ---
 
-## 🛠️ 汉化原理说明
+### 3. 一键卸载与还原官方英文
 
-本引擎采用 **ASAR 包注入模式**，专为 **Antigravity 2.0+** 的 Electron 架构量身定制：
-1. **自动释放锁**：脚本运行前会自动探测并安全关闭 Antigravity 进程，防止文件占用锁定。
-2. **安全备份**：首次运行时，会在软件目录自动创建原始 `app.asar.bak` 文件，确保随时可无损还原。
-3. **精准注入**：
-   - 注入 `main.js` + `dist/agy_zh/`（**源码级汉化层**）：Antigravity 2.x 的界面代码并不在 app.asar 里，而是内嵌在 `language_server` 中、启动后通过本地 HTTPS 下发给窗口。主进程用 Chrome DevTools Protocol 的 `Fetch` 域只拦截对 `/main.js` 的这一个请求，用 acorn 解析成 AST，把处于展示位置（JSX children、label/title/placeholder/aria-label 等属性、模板字符串、工具步骤标题等）的字面量替换为中文后再交给窗口。因为是按语法位置替换，同一个单词出现在比较、路由键、CSS 里不会被误改；带插值的句子（如 `Pushed ${0} commits to ${1}`）也能整句翻译。对“既做显示又做路由键”的字符串（设置页的 General / Appearance 等），字典里用 `scope: "all"` 标记后会把整个 bundle 内的该字符串一致改名（含比较和 case 分支），逻辑不变。译文按（bundle ETag + 字典哈希）缓存在用户数据目录，同一版本只解析一次。
-   - 不再注入 DOM 级文本替换脚本：聊天记录、代码、文件名、终端里的英文不会被改动。
-   - **会话框保护（渲染库保护区）**：bundle 里的第三方库（KaTeX、react-dom、remark / rehype / micromark Markdown 管线、lodash、diff 等）被打包成带许可证注释或模块标记的独立顶层语句。翻译前先把这些语句整段识别为保护区，区内既不提取候选也不做任何替换（包括 `scope: "all"`），因此字体名（`"Size"+n+"-Regular"`）、按键名表、序列化选项等库内部字符串不会被字典误伤，聊天里的公式、Markdown、代码块按原样渲染。另外，单个词与变量无空格直接拼接（`"Size"+n`）一律视为标识符片段，不当作文案。
-   - 注入 `menu.js`：深度补丁系统级标题栏菜单。
-   - 注入 `tray.js`：汉化托盘与右键通知状态菜单。
-   - 注入 `loadingOverlay.js`：注入极具极客风格的趣味加载语：“反重力引擎已启动，正在摆脱地心引力...”。
+1. **完全退出** Antigravity 软件。
+2. 运行 **`双击运行中文汉化工具.bat`**（Windows）或 **`双击运行中文汉化工具.command`**（macOS）。
+3. 选择 **`[2] 卸载汉化，还原官方英文`**。
+4. 引擎将自动使用首次备份的 `app.asar.bak` 无损还原应用，并自动清理运行时译文缓存。
 
 ---
 
-## 💡 如何通过 AI 助手自动补充或修改汉化？
+## 🛠️ 深度技术原理
 
-如果在使用过程中，您发现了漏译的英文，或者觉得某些中文翻译不够接地气，**您可以直接在聊天窗口中命令您的 AI 编码助手（即 Antigravity）来帮您更新词库**！无论是直接发截图还是描述文字，AI 都会自动帮您把对照词条写进词典。
+Antigravity 2.x 的界面渲染架构与常规 Electron 应用不同：其界面代码并未直接打包在 `app.asar` 中，而是在启动后由后台 `language_server` 通过本地 HTTPS 动态分发给前端窗口。
 
-> [!IMPORTANT]
-> **⚠️ AI 助手如何定位您的汉化词库文件？**
-> 
-> 1. **推荐做法（最省心）**：
->    在 Antigravity 软件中，点击 **“打开文件夹 (Open Folder)”**，直接将本汉化包目录（即包含当前 `README.md` 的文件夹）作为**项目/工作区**打开，然后在此工作区下与 AI 对话。此时 AI 能够直接感知并读写当前项目，您不需要提供任何路径，直接发送翻译要求，AI 就能在后台自动帮您改好词典！
-> 
-> 2. **免开项目做法（提示词中需指定汉化目录）**：
->    如果您当前正在开发别的项目，没有把汉化目录作为项目打开，那么您在对 AI 发起汉化命令时，**必须在提示词里明确告诉 AI 您的汉化包所在路径**，否则 AI 无法得知要修改您电脑上的哪个文件夹。
->    * **提示词示例**：
->      > **“我的汉化包目录在 `C:\Users\您的电脑用户名\Downloads\antigravity_chinese`（请替换为您本地的实际路径），请帮我把下面这张截图里漏译的内容补全到词典里。”**
+```
+                       ┌──────────────────────────────────────┐
+                       │  language_server (动态分发 main.js)   │
+                       └──────────────────┬───────────────────┘
+                                          │
+                                          ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 主进程 CDP Fetch 域拦截 (src_layer/bootstrap.js)                        │
+│                                                                        │
+│   1. 检查 ETag + 字典哈希缓存 ──► [命中] ──► 直接返回缓存改写脚本         │
+│   2. [未命中] ──► Acorn AST 解析 ──► 识别渲染保护区 ──► 精确替换字面量   │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                                   ▼
+                       ┌──────────────────────┐
+                       │   窗口渲染前端界面    │
+                       │   (纯中文，0 DOM 损耗) │
+                       └──────────────────────┘
+```
 
-### 📋 常用提示词（Prompt）模板
-
-#### 1. 方式一：直接在聊天中发送截图（推荐 📸）
-如果您不方便打字，可以直接将未汉化干净的界面截图粘贴发送给 AI，并附带以下指令：
-> **“帮我把这张截图里所有未汉化的英文选项和面板内容补全到中文词典中。”**
-*(AI 会自动通过视觉识别截图中的全部英文，并精准写入字典。)*
-
-#### 2. 方式二：直接在聊天中发送文字描述（极速 ✍️）
-如果您只想修改或增加某一个特定词汇，可以直接发送文字描述给 AI：
-> **“帮我把漏译的英文 'Allow agent to view and edit files outside of the current workspace automatically' 汉化为 '允许智能体自动查看并编辑当前工作区之外的文件'。”**
-*(AI 会立即找到对应的词典并精准修改或追加该词条。)*
-
----
-
-### 🔄 更新生效流程
-1. **命令 AI 更新**：在对话中通过截图或文字告诉 AI 您的汉化需求，AI 会自动更新 `dicts_src/` 下的字典文件（键必须是源码里的原文，AI 可用 `temps/src_candidates.json` 核对）。
-2. **退出软件**：**完全退出**您的 Antigravity 软件。
-3. **重新注入**：在当前文件夹中**再次双击运行 `双击运行中文汉化工具.bat` / `.command`** 并选择安装，重新部署汉化。
-4. **重启软件**：重新打开 Antigravity，您的改动即可完美生效！
+1. **CDP 精准拦截**：主进程通过 Chrome DevTools Protocol 仅对匹配 `/main.js` 的请求进行拦截，其余所有网络与本地流量原样通行。
+2. **AST 语义级改写**：使用 Acorn 解析 JavaScript AST，仅对作为界面标签、占位符、对话引导等文案字面量进行替换；对于涉及内部路由与状态逻辑的键名，字典采用 `scope: "all"` 语法实施全包一致性符号重命名。
+3. **第三方渲染库隔离区**：自动识别 KaTeX、react-dom、remark/rehype、lodash 等库的顶层语句块，划定保护范围，确保会话内的公式与排版毫发无损。
 
 ---
 
-## 📝 词典自定义指南 (供极客手动使用)
+## 🤖 借助 AI 助手自动补充与定制汉化
 
-### 源码级字典 `dicts_src/`
-- 键必须与前端源码中的字面量**完全一致**（含大小写、标点、首尾空格）。带插值的句子用 `${0}`、`${1}` 表示第 1、2 个插值，例如 `"Pushed ${0} commit${1} to ${2}."`；译文可以省略或重排占位符。
-- 值为 `null` 表示明确不翻译；值为 `""` 表示删除该片段（用于英文复数后缀等）。
-- 值也可以写成对象来放宽“标识符安全阀”（默认情况下，同一字符串只要在源码别处被当作比较值 / 键名 / 查找实参使用，就不会被翻译）：
-  ```json
-  "General": { "zh": "通用", "scope": "all" },
-  "Conversations": { "zh": "会话", "scope": "display", "notWith": ["prefix"] },
-  "New Project": { "zh": "新建项目", "scope": "display", "keys": ["label"] }
-  ```
-  - `scope: "all"`：整个 bundle 里所有等于原文的字符串字面量一起改名（含 `===` 比较、`case`、Map 键、函数实参），适用于只在前端内部流转的路由键；提取工具会列出无法一起改名的位置（标识符形式的对象键、模板片段）供确认。
-  - `scope: "display"`：只翻译展示位置（label / title / children 等），比较和键名保持英文；`keys` 限定只译哪些属性名下的值，`notWith` 表示所在对象含有这些兄弟属性时不译。
-- 文件按序号加载，后面的文件覆盖前面的同名键：`00_common.json` → 按主题分文件 → `70_v<版本>.json`（版本补翻） → `90_fixups.json`（修正表） → `95_scoped_identifiers.json`。
-- 安装时 `terminology.js` 会对译文做统一后处理（Git 术语保留英文、Review 统一为“审核”等）。
-- 渲染库保护区内的字符串（KaTeX 选项说明、Markdown 解析器的内部消息等）即使写进字典也不会生效。提取工具会在控制台列出每段保护区和区内被拦下的字典命中，并把“只出现在保护区内”的键写到 `temps/src_candidates.zone_only.json`，可据此清理字典。
+如果您在使用中发现漏翻的英文或希望调整用词，**可以直接让 Antigravity 窗口里的 AI 帮您修改字典**！
 
-### 🔁 软件升级后如何快速补翻（可持续汉化）
-1. 升级 Antigravity 后先照常运行 **`双击运行中文汉化工具`** 重新安装：旧字典能覆盖的文案立刻恢复中文，只有**新增 / 改动的文案**会显示英文。
-2. 保持 Antigravity 处于运行状态，在汉化包目录执行：
+### 💡 最佳实践姿势
+1. 在 Antigravity 中点击 **“文件 (File) -> 打开文件夹 (Open Folder)”**，直接将本汉化包仓库所在目录作为工作区打开；
+2. 直接在聊天界面发送指令（附带截图或文本）：
+
+#### 模板 1：直接粘贴截图 📸
+> **“请帮我查看这张截图，把里面所有未汉化的英文面板与选项内容，提取并增补到 dicts_src 字典中。”**
+
+#### 模板 2：指定文字翻译 ✍️
+> **“帮我把漏译的英文文案 'Allow agent to run terminal commands automatically' 翻译为 '允许智能体自动运行终端命令' 并保存到字典。”**
+
+3. AI 写入字典后，完全退出 Antigravity，重新双击运行安装脚本，重启软件即可立刻生效！
+
+---
+
+## 📝 极客进阶：软件升级后如何快速补翻
+
+当 Antigravity 升级新版本时（例如从 2.15.1 升级到后续版本），您只需：
+
+1. 升级后先运行一次 **`双击运行中文汉化工具`**（旧词条瞬间生效）；
+2. 保持软件运行，在终端执行对比工具：
    ```bash
    node tools/extract_src_strings.js
    ```
-   工具会自动从本机 language_server 抓取新版本的 `main.js`，与 `dicts_src/` 对比，并输出：
-   - 控制台：候选总数、已翻译 / 未翻译 / 保留英文的数量，“字典里有但新版本已删除”的键数量，以及识别到的渲染库保护区（KaTeX / react-dom / remark …）和区内被拦下的字典命中——若某段保护区拦下了明显的界面文案，说明识别范围过宽，需要调整；
-   - `temps/pending_<版本号>.json`：**新版本待翻清单**——只包含字典里还没有的原文，能从旧译文推断的（大小写 / 标点 / 单复数 / 措辞微调）已预填建议译文，其余条目的值仍是英文原文；
-   - `temps/src_candidates.json`：全部候选及其源码上下文样例，翻译拿不准时可查语境；
-   - `temps/src_candidates.dead.json`：新版本已不存在的键（可以删，留着也无害）；
-   - `temps/src_candidates.zone_only.json`：只出现在渲染库保护区内的键（永远不会生效，可清理）。
-3. 把待翻清单里仍为英文的值翻成中文（专有名词、按键名写 `null`），整份文件另存为 `dicts_src/70_v<版本号>.json`。也可以直接把这份清单发给 AI 助手让它翻译。
-4. 再次运行 **`双击运行中文汉化工具`** 安装并重启软件。译文缓存按 bundle ETag + 字典哈希区分，无需手动清理。
-
-> 如果没有运行中的 Antigravity（例如在另一台机器上补翻），也可以把抓到的 `main.js` 路径作为参数传给工具：`node tools/extract_src_strings.js path/to/main.js`。
+   工具会自动从本地抓取当前最新 `main.js`，与现有字典比对，并在控制台输出统计：
+   - 自动生成 `temps/pending_<版本号>.json`（**待翻清单**，相近词条已智能预填）；
+   - 导出 `temps/src_candidates.zone_only.json`（保护区内部词条，提示可清理项）。
+3. 将清单中英文翻译补充后另存为 `dicts_src/70_v<新版本>.json`；
+4. 再次运行安装脚本，即可实现无缝持续汉化！
 
 ---
 
-## 常见问题解答 (FAQ)
+## ❓ 常见问题排查 (FAQ)
 
-### 1）提示“解包失败”或缺少 npm 环境
-* **原因**：汉化引擎依赖 Node.js 进行 ASAR 包的解析。
-* **解决**：由于 Antigravity 本身就是一个基于 Node.js/Electron 的程序，您的电脑一般都已自带环境。如果极少数情况下报错，只需在电脑安装 [Node.js](https://nodejs.org/)（LTS 版本即可）并重启脚本。
+### Q1：运行提示“解包失败”或缺少环境？
+* 本汉化引擎采用纯 Node.js 编写，Antigravity 本身就是 Electron 架构，大部分电脑均已具备运行环境。若提示缺少 Node，只需前往 [Node.js 官方网站](https://nodejs.org/) 安装 LTS 版本即可。
 
-### 2）提示“权限不足”或 macOS 提示“无法打开”
-* **解决**：
-  - **Windows**：请右键点击 `双击运行中文汉化工具.bat`，选择 **“以管理员身份运行”**。
-  - **macOS**：若双击运行 `.command` 提示无法打开或没有执行权限，可在终端中执行 `chmod +x *.command` 来授权。如果是系统安全拦截，请在“系统设置 -> 隐私与安全性”中点击“仍要打开”。本汉化包已内置自动重签名机制，修改后会重新进行 Ad-hoc 签名以防止 macOS 提示应用损坏。
+### Q2：macOS 提示“应用已损坏”或无法打开？
+* macOS 会校验应用签名。本汉化工具在安装完成后会自动调用 `codesign --force --deep -s -` 对应用执行 Ad-hoc 深度重签名。
+* 若首次双击 `.command` 提示权限不足，可在终端中执行：`chmod +x *.command`；若提示系统安全拦截，请在“系统设置 -> 隐私与安全性”中点击“仍要打开”。
 
-### 3）软件官方更新后，汉化失效了怎么办？
-* 软件升级时，官方会覆盖 `app.asar` 文件。您无需担心，直接完全退出软件，重新双击运行 **`双击运行中文汉化工具.bat`** 并选择安装，重新注入一次即可完美恢复中文。
-* 新版本新增的文案会暂时显示英文（源码层只替换字典里有的原文），按上文“软件升级后如何快速补翻”运行 `node tools/extract_src_strings.js`，把生成的待翻清单补翻后重新安装即可。
+### Q3：Windows 提示文件占用或权限不足？
+* 请确保 Antigravity 已完全退出（检查任务栏右下角托盘图标）。建议右键点击 `双击运行中文汉化工具.bat` 选择 **“以管理员身份运行”**。
 
-### 4）界面仍是英文、但顶部菜单已汉化？
-* 查看 `%APPDATA%\Antigravity\logs\main.log`（macOS 为 `~/Library/Application Support/Antigravity/logs/main.log`）中带 `[agy-zh]` 的行：正常应有 `translated main.js: N literals` 或 `cache hit`。
-* 若出现 `debugger attach failed`，说明有其他调试器占用了窗口（例如打开了开发者工具）；关闭后重启软件即可。
-* 译文缓存位于用户数据目录的 `zh-cn-src-cache/`，删除后重启软件会自动重新生成；卸载汉化时会自动清理。
+### Q4：官方软件推送更新后，汉化丢失了？
+* 软件升级后官方会替换 `app.asar`。无需重新下载汉化包，只需退出软件，重新双击运行 **`双击运行中文汉化工具.bat`** 再次点击安装即可恢复。
 
-### 5）聊天里的公式 / Markdown 渲染出错，提示 `Font metrics not found` 之类的英文？
-* 源码层不会改动聊天内容本身；负责渲染的第三方库整段是保护区，字典对其中的字符串不生效（详见“汉化原理说明”）。
-* 若升级汉化包后仍出现这类错误，重新运行 **`双击运行中文汉化工具`** 安装一次（译文缓存按字典与核心模块的哈希区分，升级后自动重新生成），并运行 `node tools/extract_src_strings.js` 查看保护区报告：每段保护区都会列出被拦下的字典命中，可据此定位。
+### Q5：界面仍是英文，但顶部菜单已经中文？
+* 检查是否有开发者工具窗口处于打开状态导致调试端口冲突（Debugger attach conflict），关闭开发者工具并重启软件即可；
+* 也可在 `%APPDATA%\Antigravity\logs\main.log`（macOS 对应 `~/Library/Application Support/Antigravity/logs/main.log`）中查看带 `[agy-zh]` 标识的启动日志以排查原因。
+
+---
+
+## 📄 开源许可证
+
+本项目遵循 [MIT License](./LICENSE) 开源协议。核心源码级语法解析器基于 [Acorn](https://github.com/acornjs/acorn)（MIT License）。
 
 ---
 
 ## 🤝 致谢
-- 感谢所有参与测试与反馈的贡献者！
+
+感谢所有在 issue、PR 中提出宝贵建议与测试反馈的朋友们！欢迎 Star ⭐ 支持与共同完善。

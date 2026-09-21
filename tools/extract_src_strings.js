@@ -75,8 +75,14 @@ function buildSuggester(lookup) {
 
 function readInstalledVersion() {
     const candidates = [];
-    if (process.platform === 'win32' && process.env.LOCALAPPDATA) candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'antigravity', 'resources', 'app.asar'));
-    if (process.platform === 'darwin') candidates.push('/Applications/Antigravity.app/Contents/Resources/app.asar');
+    if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+        candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'Antigravity', 'resources', 'app.asar'));
+        candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'antigravity', 'resources', 'app.asar'));
+    }
+    if (process.platform === 'darwin') {
+        candidates.push('/Applications/Antigravity.app/Contents/Resources/app.asar');
+        candidates.push(path.join(process.env.HOME || '', 'Applications', 'Antigravity.app', 'Contents', 'Resources', 'app.asar'));
+    }
     for (const asar of candidates) {
         try {
             for (const file of [asar + '.bak', asar]) {
@@ -88,7 +94,10 @@ function readInstalledVersion() {
                 const header = JSON.parse(hb.toString('utf8').replace(/\0+$/, ''));
                 const pkg = header.files['package.json'];
                 if (!pkg) { fs.closeSync(fd); continue; }
-                const buf = Buffer.alloc(pkg.size); fs.readSync(fd, buf, 0, pkg.size, 8 + headerSize + Number(pkg.offset));
+                const offset = BigInt(pkg.offset);
+                const base = BigInt(8 + headerSize);
+                const buf = Buffer.alloc(pkg.size);
+                fs.readSync(fd, buf, 0, pkg.size, base + offset);
                 fs.closeSync(fd);
                 const v = JSON.parse(buf.toString('utf8')).version;
                 if (v) return String(v);
