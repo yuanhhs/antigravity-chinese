@@ -351,6 +351,29 @@ function templateKey(node) {
     return key;
 }
 
+/**
+ * 配额接口的 description 是服务端运行时生成的，不会作为字符串字面量出现在 main.js 中。
+ * 这里只翻译已知、结构固定的配额提示，避免把普通服务端内容或会话正文误当成界面文案。
+ * 此函数还会被序列化后内联进前端 bundle，因此必须保持完全自包含。
+ */
+function translateQuotaDescription(value) {
+    if (typeof value !== 'string') return value;
+    const match = /^You have used (some|all) of your (weekly|daily) limit, it will fully refresh in (.+)\.$/i.exec(value.trim());
+    if (!match) return value;
+
+    const amount = match[1].toLowerCase() === 'all' ? '全部' : '部分';
+    const period = match[2].toLowerCase() === 'daily' ? '每日' : '每周';
+    const duration = match[3]
+        .replace(/\bless than (?:a|one) minute\b/gi, '不到 1 分钟')
+        .replace(/\b(\d+)\s+weeks?\b/gi, '$1 周')
+        .replace(/\b(\d+)\s+days?\b/gi, '$1 天')
+        .replace(/\b(\d+)\s+hours?\b/gi, '$1 小时')
+        .replace(/\b(\d+)\s+minutes?\b/gi, '$1 分钟')
+        .replace(/\b(\d+)\s+seconds?\b/gi, '$1 秒')
+        .replace(/,\s*/g, ' ');
+    return `您已使用${amount}${period}限额，将在 ${duration}后完全恢复。`;
+}
+
 function isStringLiteral(n) {
     return n && n.type === 'Literal' && typeof n.value === 'string';
 }
@@ -865,7 +888,7 @@ function translateSource(src, dict, opts = {}) {
     const { displayScope, allScope } = scopesOf(lookup);
     const zones = findProtectedZones(ast, src);
     const inZone = zoneIndexer(zones);
-    const { marked, childrenLists } = analyze(ast, { force, displayScope, inZone });
+    const { marked, parentOf, childrenLists } = analyze(ast, { force, displayScope, inZone });
 
     const reps = [];
     const repNodes = new Set();
@@ -900,6 +923,20 @@ function translateSource(src, dict, opts = {}) {
             reps.push({ start: node.start, end: node.end, node, zh: out.join(sep) });
             repNodes.add(node);
         }
+    }
+
+    // 配额摘要的 refreshText 来自接口字段（a.description），不是源码字面量。
+    // 仅在同时具有 remainingFraction/subtext/disabled 的配额视图模型中包装该动态值，
+    // 让已知配额句式在运行时进入受限翻译函数；其他 refreshText/description 均不处理。
+    const runtimeTextFn = translateQuotaDescription.toString();
+    for (const [node, parent] of parentOf) {
+        if (!parent || parent.type !== 'Property' || parent.value !== node || getKeyName(parent) !== 'refreshText') continue;
+        if (isStringLiteral(node) || node.type === 'TemplateLiteral' || inZone(node.start) >= 0) continue;
+        const obj = parentOf.get(parent);
+        if (!obj || obj.type !== 'ObjectExpression') continue;
+        const siblingKeys = new Set(obj.properties.map(getKeyName).filter(Boolean));
+        if (!siblingKeys.has('remainingFraction') || !siblingKeys.has('subtext') || !siblingKeys.has('disabled')) continue;
+        reps.push({ start: node.start, end: node.end, node, runtimeTextFn });
     }
 
     // 复数后缀联动：children 序列中形如  n," item",n===1?"":"s"  的 "s"/"es" 分支，
@@ -941,6 +978,9 @@ function translateSource(src, dict, opts = {}) {
     }
     function renderNode(r, inner) {
         const node = r.node;
+        if (r.runtimeTextFn) {
+            return '(' + r.runtimeTextFn + ')(' + render(node.start, node.end, inner) + ')';
+        }
         if (node.type === 'Literal') return JSON.stringify(r.zh);
         const exprs = node.expressions;
         if (exprs.length === 0) return JSON.stringify(r.zh);
@@ -970,4 +1010,4 @@ function translateSource(src, dict, opts = {}) {
     return { code, replaced, matchedKeys, missing, details, zones: zones.length };
 }
 
-module.exports = { extract, translateSource, normalizeDict, findProtectedZones, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };
+module.exports = { extract, translateSource, translateQuotaDescription, normalizeDict, findProtectedZones, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };
