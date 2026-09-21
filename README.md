@@ -1,10 +1,10 @@
 # Antigravity 2.0 智能编程中文语言包 & 汉化引擎
 
 > **支持系统**：Windows & macOS (均已内置一键脚本)  
-> **匹配版本**：Antigravity v2.12.2  
+> **匹配版本**：Antigravity v2.15.x（v2.12+ 兼容）  
 > **核心引擎**：Node.js (无需安装 Python，零依赖，极速极稳)  
 > **汉化范围**：包括软件界面、顶部系统菜单、任务栏右键菜单、加载动画、设置面板、新手引导及登录页。  
-> **注入原理**：通过 ASAR 还原与重包，安全注入 `preload.js` 动态翻译机制，绝不修改核心二进制，一键安装与完美还原。
+> **注入原理**：通过 ASAR 还原与重包注入两层汉化：**源码级**（在主进程拦截 language_server 下发的前端 bundle，按 AST 精确替换界面文案字面量）+ **DOM 级**（`preload.js` 动态翻译兜底）。绝不修改核心二进制，一键安装与完美还原。
 
 > [!WARNING]
 > **关于聊天历史记录/对话框内容被汉化的已知问题及匹配机制说明（开发者必读）**：
@@ -33,7 +33,10 @@
 ## 📂 项目文件结构
 - **`双击运行中文汉化工具.bat`** / **`.command`**：Windows / macOS 一键执行入口，运行后可选择“安装汉化”或“卸载还原官方英文”。
 - **`localization_engine.js`**：核心汉化逻辑，负责 app.asar 的解包、代码注入、重新打包以及 macOS 下的自动深度重签名。
-- **`dicts/`**：汉化字典文件夹，内含按模块分类的 JSON 对照翻译字典。
+- **`dicts_src/`**：**源码级字典**（主力）。键是前端源码里的字面量原文（带插值的句子写作 `Allow ${0}?`），值为中文；值为 `null` 表示明确保留英文（专有名词、按键名等）。
+- **`src_layer/`**：源码级汉化运行时，安装时会被复制进 app.asar 的 `dist/agy_zh/`：`agy_src_i18n.js`（AST 提取/替换核心）、`bootstrap.js`（主进程拦截 `main.js`）、`acorn.js`（JS 解析器，MIT）。
+- **`tools/extract_src_strings.js`**：从当前版本的 `main.js` 提取全部界面文案候选，并与 `dicts_src/` 做覆盖率对比（软件升级后补翻用）。
+- **`dicts/`**：DOM 级字典（兜底层），内含按模块分类的 JSON 对照翻译字典。
 
 ---
 
@@ -103,7 +106,8 @@ node localization_engine.js --brand-title translated
 1. **自动释放锁**：脚本运行前会自动探测并安全关闭 Antigravity 进程，防止文件占用锁定。
 2. **安全备份**：首次运行时，会在软件目录自动创建原始 `app.asar.bak` 文件，确保随时可无损还原。
 3. **精准注入**：
-   - 注入 `preload.js`：采用 WeakSet 记录与 Shadow DOM 穿透，启动高效的 `MutationObserver` 引擎，动态监测并将渲染层文本翻译为中文。
+   - 注入 `main.js` + `dist/agy_zh/`（**源码级汉化层**）：Antigravity 2.x 的界面代码并不在 app.asar 里，而是内嵌在 `language_server` 中、启动后通过本地 HTTPS 下发给窗口。主进程用 Chrome DevTools Protocol 的 `Fetch` 域只拦截对 `/main.js` 的这一个请求，用 acorn 解析成 AST，把处于展示位置（JSX children、label/title/placeholder/aria-label 等属性、模板字符串）的字面量替换为中文后再交给窗口。因为是按语法位置替换，同一个单词出现在比较、路由键、CSS 里不会被误改；带插值的句子（如 `Pushed ${0} commits to ${1}`）也能整句翻译。译文按（bundle ETag + 字典哈希）缓存在用户数据目录，同一版本只解析一次。
+   - 注入 `preload.js`（**DOM 级兜底层**）：采用 WeakSet 记录与 Shadow DOM 穿透，启动高效的 `MutationObserver` 引擎，动态监测并翻译源码层未覆盖的渲染层文本。
    - 注入 `menu.js`：深度补丁系统级标题栏菜单。
    - 注入 `tray.js`：汉化托盘与右键通知状态菜单。
    - 注入 `loadingOverlay.js`：注入极具极客风格的趣味加载语：“反重力引擎已启动，正在摆脱地心引力...”。
@@ -140,7 +144,7 @@ node localization_engine.js --brand-title translated
 ---
 
 ### 🔄 更新生效流程
-1. **命令 AI 更新**：在对话中通过截图或文字告诉 AI 您的汉化需求，AI 会自动更新 `dicts/` 下的字典文件。
+1. **命令 AI 更新**：在对话中通过截图或文字告诉 AI 您的汉化需求，AI 会自动更新 `dicts_src/`（源码级，优先）或 `dicts/`（DOM 级）下的字典文件。
 2. **退出软件**：**完全退出**您的 Antigravity 软件。
 3. **重新注入**：在当前文件夹中**再次双击运行 `双击运行中文汉化工具.bat` / `.command`** 并选择安装，重新部署汉化。
 4. **重启软件**：重新打开 Antigravity，您的改动即可完美生效！
@@ -149,7 +153,19 @@ node localization_engine.js --brand-title translated
 
 ## 📝 词典自定义指南 (供极客手动使用)
 
-如果您想手动修改翻译，可以直接打开 `dicts/` 目录下的 JSON 文件：
+### 源码级字典 `dicts_src/`（推荐优先修改）
+- 键必须与前端源码中的字面量**完全一致**（含大小写、标点、首尾空格）。带插值的句子用 `${0}`、`${1}` 表示第 1、2 个插值，例如 `"Pushed ${0} commit${1} to ${2}."`；译文可以省略或重排占位符。
+- 值为 `null` 表示明确不翻译；值为 `""` 表示删除该片段（用于英文复数后缀等）。
+- 文件按序号加载，后面的文件覆盖前面的同名键，`90_fixups.json` 是最终修正表。
+- 软件升级后，运行下面的命令可拿到新版本的全部候选文案并对比覆盖率（需要 Antigravity 正在运行，或手动传入 `main.js` 路径）：
+  ```bash
+  node tools/extract_src_strings.js            # 自动从本机运行中的 Antigravity 抓取 main.js
+  node tools/extract_src_strings.js path/to/main.js
+  ```
+  未翻译条目会写到 `temps/src_candidates.json`（值为空串），补翻后放进 `dicts_src/` 重新安装即可。
+
+### DOM 级字典 `dicts/`（兜底层）
+如果某段文本在源码层找不到（例如由服务端返回的动态文案），可以直接打开 `dicts/` 目录下的 JSON 文件：
 - **`common.json`**：公共基础词汇、侧边栏概览、登录页、常用按钮等。
 - **`page_settings.json`**：包含极其丰富的详细设置面板、权限二级菜单对照。
 - **`menu_nav.json`**：系统及菜单栏翻译。
@@ -175,6 +191,12 @@ node localization_engine.js --brand-title translated
 
 ### 3）软件官方更新后，汉化失效了怎么办？
 * 软件升级时，官方会覆盖 `app.asar` 文件。您无需担心，直接完全退出软件，重新双击运行 **`双击运行中文汉化工具.bat`** 并选择安装，重新注入一次即可完美恢复中文。
+* 新版本新增的文案会暂时显示英文（源码层只替换字典里有的原文），运行 `node tools/extract_src_strings.js` 即可列出所有新增文案，补翻后重新安装。
+
+### 4）源码级汉化层没有生效（界面仍是英文、但菜单已汉化）？
+* 查看 `%APPDATA%\Antigravity\logs\main.log`（macOS 为 `~/Library/Application Support/Antigravity/logs/main.log`）中带 `[agy-zh]` 的行：正常应有 `translated main.js: N literals` 或 `cache hit`。
+* 若出现 `debugger attach failed`，说明有其他调试器占用了窗口（例如打开了开发者工具）；关闭后重启软件即可。
+* 译文缓存位于用户数据目录的 `zh-cn-src-cache/`，删除后重启软件会自动重新生成；卸载汉化时会自动清理。
 
 ---
 

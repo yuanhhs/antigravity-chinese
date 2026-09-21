@@ -35,6 +35,129 @@ const BRAND_TITLE_MODE = BRAND_TITLE_ALIASES[String(getOptionValue('--brand-titl
 const SIGNATURE_START = "/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */";
 const SIGNATURE_END = "/* --- ANTIGRAVITY CHINESE LOCALIZATION END --- */";
 
+// ==========================================
+// 源码级汉化层（拦截前端 bundle，按 AST 替换字面量）
+// ==========================================
+const SRC_SIGNATURE_START = "/* --- ANTIGRAVITY CHINESE LOCALIZATION SRC START --- */";
+const SRC_SIGNATURE_END = "/* --- ANTIGRAVITY CHINESE LOCALIZATION SRC END --- */";
+const srcDictsFolder = () => (typeof USE_TW !== 'undefined' && USE_TW) ? 'dicts_src_tw' : 'dicts_src';
+
+function loadSrcDictionary() {
+    const dir = path.join(__dirname, srcDictsFolder());
+    if (!fs.existsSync(dir)) return null;
+    const merged = {};
+    let files = 0;
+    for (const file of fs.readdirSync(dir).sort()) {
+        if (!file.endsWith('.json')) continue;
+        try {
+            const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8'));
+            for (const [k, v] of Object.entries(data)) {
+                if (v === null || typeof v === 'string') merged[k] = v;
+            }
+            files++;
+        } catch (e) {
+            console.warn(`[警告] 源码级字典 ${file} 解析失败，已跳过: ${e.message}`);
+        }
+    }
+    return files ? merged : null;
+}
+
+function cleanSrcBootstrap(content) {
+    const regex = new RegExp(escapeRegExp(SRC_SIGNATURE_START) + "[\\s\\S]*?" + escapeRegExp(SRC_SIGNATURE_END) + "\\n?", "g");
+    return content.replace(regex, "");
+}
+
+/**
+ * 把源码级汉化层写入解包目录：dist/agy_zh/{acorn.js, agy_src_i18n.js, bootstrap.js, dict.json}
+ * 并在 dist/main.js 的 "use strict" 之后挂载 require。
+ */
+function injectSrcLayer(tempDir) {
+    const dict = loadSrcDictionary();
+    if (!dict) {
+        console.log(`[跳过] 未找到源码级字典目录 ${srcDictsFolder()}/，仅使用 DOM 层汉化。`);
+        return false;
+    }
+    const mainPath = path.join(tempDir, "dist", "main.js");
+    if (!fs.existsSync(mainPath)) {
+        console.warn(`[警告] 未找到 dist/main.js，跳过源码级汉化层。`);
+        return false;
+    }
+    const srcDir = path.join(__dirname, "src_layer");
+    const required = ["acorn.js", "agy_src_i18n.js", "bootstrap.js"];
+    for (const f of required) {
+        if (!fs.existsSync(path.join(srcDir, f))) {
+            console.warn(`[警告] 缺少 src_layer/${f}，跳过源码级汉化层。`);
+            return false;
+        }
+    }
+    const outDir = path.join(tempDir, "dist", "agy_zh");
+    fs.rmSync(outDir, { recursive: true, force: true });
+    fs.mkdirSync(outDir, { recursive: true });
+    for (const f of required) fs.copyFileSync(path.join(srcDir, f), path.join(outDir, f));
+    if (fs.existsSync(path.join(srcDir, "acorn.LICENSE"))) fs.copyFileSync(path.join(srcDir, "acorn.LICENSE"), path.join(outDir, "acorn.LICENSE"));
+    fs.writeFileSync(path.join(outDir, "dict.json"), JSON.stringify(dict), 'utf-8');
+
+    let main = cleanSrcBootstrap(fs.readFileSync(mainPath, 'utf-8'));
+    const hook = SRC_SIGNATURE_START + "\n" +
+        'try { require("./agy_zh/bootstrap.js"); } catch (e) { console.error("[agy-zh] source-level localization failed to load:", e); }' + "\n" +
+        SRC_SIGNATURE_END + "\n";
+    const marker = '"use strict";';
+    const idx = main.indexOf(marker);
+    if (idx !== -1) {
+        const end = idx + marker.length;
+        main = main.slice(0, end) + "\n" + hook + main.slice(end);
+    } else {
+        main = hook + main;
+    }
+    fs.writeFileSync(mainPath, main, 'utf-8');
+    console.log(`[修改] 源码级汉化层注入成功（字典 ${Object.keys(dict).length} 条）！`);
+    return true;
+}
+
+/** 卸载时清理源码级汉化的译文缓存（位于用户数据目录，安装时由运行时自动生成） */
+function cleanSrcCache() {
+    const candidates = [];
+    if (process.platform === 'win32' && process.env.APPDATA) candidates.push(path.join(process.env.APPDATA, 'Antigravity', 'zh-cn-src-cache'));
+    if (process.platform === 'darwin' && process.env.HOME) candidates.push(path.join(process.env.HOME, 'Library', 'Application Support', 'Antigravity', 'zh-cn-src-cache'));
+    if (process.platform === 'linux' && process.env.HOME) candidates.push(path.join(process.env.XDG_CONFIG_HOME || path.join(process.env.HOME, '.config'), 'Antigravity', 'zh-cn-src-cache'));
+    for (const dir of candidates) {
+        try {
+            if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); console.log(`[清理] 已删除源码级汉化缓存: ${dir}`); }
+        } catch (e) { /* ignore */ }
+    }
+}
+
+/**
+ * 读取 asar 头部，找出官方包里标记为 unpacked 的文件所在目录（如 node_modules/chrome-devtools-mcp），
+ * 重新打包时用 --unpack-dir 保持一致，避免主进程按 app.asar.unpacked 路径找不到文件。
+ */
+function getAsarUnpackDirs(asarFile) {
+    try {
+        const fd = fs.openSync(asarFile, 'r');
+        const head = Buffer.alloc(16);
+        fs.readSync(fd, head, 0, 16, 0);
+        const headerSize = head.readUInt32LE(12);
+        const buf = Buffer.alloc(headerSize);
+        fs.readSync(fd, buf, 0, headerSize, 16);
+        fs.closeSync(fd);
+        const header = JSON.parse(buf.toString('utf8').replace(/\0+$/, ''));
+        const dirs = new Set();
+        (function walk(node, prefix) {
+            for (const [name, v] of Object.entries(node.files || {})) {
+                if (v.files) walk(v, prefix + name + "/");
+                else if (v.unpacked) {
+                    const parts = (prefix + name).split("/");
+                    dirs.add(parts[0] === "node_modules" && parts.length > 2 ? parts.slice(0, 2).join("/") : parts.slice(0, Math.max(1, parts.length - 1)).join("/"));
+                }
+            }
+        })(header, "");
+        return [...dirs];
+    } catch (e) {
+        return [];
+    }
+}
+
+
 function normalizeText(text) {
     if (!text) return "";
     return text.replace(/\s+/g, ' ')
@@ -909,9 +1032,16 @@ function install20(resourcesDir) {
         console.log(`[修改] 更新弹窗汉化注入成功！`);
     }
 
+    // 3.5 注入源码级汉化层（拦截 language_server 下发的前端 bundle，按 AST 替换界面文案）
+    console.log(`[修改] 正在注入源码级汉化层 (dist/agy_zh)...`);
+    injectSrcLayer(tempDir);
+
     // 4. 重新打包
     console.log(`[打包] 正在将修改后的内容打包回 app.asar...`);
-    const packRes = runCommandSync(`npx -y @electron/asar pack "${tempDir}" "${asarPath}"`);
+    const unpackDirs = getAsarUnpackDirs(fs.existsSync(bakPath) ? bakPath : asarPath);
+    const unpackArg = unpackDirs.length === 0 ? "" : (unpackDirs.length === 1 ? ` --unpack-dir "${unpackDirs[0]}"` : ` --unpack-dir "{${unpackDirs.join(",")}}"`);
+    if (unpackArg) console.log(`[打包] 保持 unpacked 目录: ${unpackDirs.join(", ")}`);
+    const packRes = runCommandSync(`npx -y @electron/asar pack "${tempDir}" "${asarPath}"${unpackArg}`);
     
     // 5. 清理临时文件夹
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -937,6 +1067,7 @@ function restore20(resourcesDir) {
     }
 
     console.log("[还原] 正在用官方备份文件恢复...");
+    cleanSrcCache();
     try {
         fs.copyFileSync(bakPath, asarPath);
         fs.unlinkSync(bakPath);

@@ -1,6 +1,6 @@
 {
     "Agent": "智能体",
-    "Agents": "智能体列表",
+    "Agents": "智能体",
     "New Agent": "新建智能体",
     "Create Agent": "创建智能体",
     "Run Agent": "运行智能体",
@@ -10,7 +10,7 @@
     "Custom Agents": "自定义智能体",
     "Subagents": "子代理",
     "Defined subagent": "已定义的子代理",
-    "Skills": "技能预设",
+    "Skills": "技能",
     "Installed Skills": "已安装技能",
     "Skills and Customizations": "技能与自定义",
     "Active": "活跃",
