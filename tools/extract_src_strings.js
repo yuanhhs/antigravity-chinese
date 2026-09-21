@@ -11,11 +11,13 @@
  *     --tw              对比 dicts_src_tw/ 而不是 dicts_src/
  *
  * 输出：
- *   - 控制台：候选数、已翻译 / 未翻译 / 标记不译、失效键、scope:"all" 键的整包改名冲突提示
+ *   - 控制台：候选数、已翻译 / 未翻译 / 标记不译、失效键、scope:"all" 键的整包改名冲突提示、
+ *             渲染库保护区（KaTeX / react-dom / remark …）列表及区内被拦下的字典命中
  *   - 候选全量 JSON（含上下文样例，便于核对语境）
  *   - 待翻清单 JSON：只包含新版本里字典还没有的原文，值预填为“建议译文”或英文原文；
  *     翻好后整份文件放进 dicts_src/（例如 dicts_src/70_v2.16.json）重新安装即可
  *   - <out>.dead.json：字典里有、但当前 bundle 已不存在的键（可清理，也可保留）
+ *   - <out>.zone_only.json：字典里有、但只出现在渲染库保护区内的键（永远不会被翻译，可清理）
  */
 'use strict';
 const fs = require('fs');
@@ -107,7 +109,7 @@ async function main() {
     const lookup = normalizeDict(dict);
     // 字典里已有的键即使形态上不像文案（如 "${0} tab"）也要参与统计，避免被误报为“源码已不存在”
     const force = new Set([...lookup].filter(([k, v]) => typeof v.zh === 'string').map(([k]) => k));
-    const { items, stats, conflicts, blocked } = extract(src, { force, dict });
+    const { items, stats, conflicts, blocked, zones, zoneKeys } = extract(src, { force, dict });
 
     let translated = 0, untranslated = 0, skipped = 0;
     const out = {};
@@ -132,13 +134,26 @@ async function main() {
     // 字典中已经失效（源码里找不到）的键
     const live = new Set(items.map(i => i.key));
     // 值为 null（保留英文）的键不一定是候选（可能因标识符冲突被过滤），只要 bundle 里还有这个字面量就不算失效
-    const dead = Object.keys(dict).filter(k => !live.has(k) && !(dict[k] === null && src.includes(JSON.stringify(k))));
+    const dead = Object.keys(dict).filter(k => !live.has(k) && !zoneKeys.has(k) && !(dict[k] === null && src.includes(JSON.stringify(k))));
+    // 只出现在渲染库保护区内的键：运行时不会被翻译（保护区内一律不动），留在字典里也无害，但可以清理
+    const zoneOnly = Object.keys(dict).filter(k => !live.has(k) && zoneKeys.has(k) && !(dict[k] === null && src.includes(JSON.stringify(k))));
 
     console.log(`候选字面量节点: ${stats.nodes}  去重后: ${stats.unique}`);
     console.log(`按上下文类型: ${JSON.stringify(stats.byKind)}`);
     console.log(`已翻译: ${translated}  未翻译: ${untranslated}  标记不译(null / 原文): ${skipped}`);
     if (untranslated) console.log(`未翻译按类型: ${JSON.stringify(byKindMissing)}`);
     console.log(`字典中源码已不存在的键: ${dead.length}`);
+    if (zones && zones.length) {
+        const total = zones.reduce((a, z) => a + z.size, 0);
+        const suppressedTotal = zones.reduce((a, z) => a + Object.values(z.suppressed).reduce((x, y) => x + y, 0), 0);
+        console.log(`\n渲染库保护区（会话框保护，区内不提取也不翻译）: ${zones.length} 段，共 ${(total / 1048576).toFixed(2)} MB，区内被拦下的字典命中 ${suppressedTotal} 处`);
+        for (const z of zones) {
+            const n = Object.values(z.suppressed).reduce((x, y) => x + y, 0);
+            const sup = n ? `  拦下: ${Object.entries(z.suppressed).map(([k, c]) => `${JSON.stringify(k.length > 40 ? k.slice(0, 37) + '…' : k)}x${c}`).join(' ')}` : '';
+            console.log(`  ${String(Math.round(z.size / 1024)).padStart(4)} KB  ${z.label}${sup}`);
+        }
+        if (zoneOnly.length) console.log(`字典里只出现在保护区内的键（不会被翻译，可清理）: ${zoneOnly.length}，见 ${path.basename(outPath).replace(/\.json$/, '.zone_only.json')}`);
+    }
     if (conflicts && conflicts.size) {
         console.log(`\nscope:"all" 整包改名提示（以下位置不会被改名，请确认它们不与被改名的字符串值做比较）:`);
         for (const [k, where] of conflicts) console.log(`  ${JSON.stringify(k)}: ${where.join(' | ')}`);
@@ -158,6 +173,7 @@ async function main() {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, JSON.stringify(out, null, 2), 'utf8');
     fs.writeFileSync(outPath.replace(/\.json$/, '.dead.json'), JSON.stringify(dead, null, 2), 'utf8');
+    fs.writeFileSync(outPath.replace(/\.json$/, '.zone_only.json'), JSON.stringify(zoneOnly, null, 2), 'utf8');
     console.log(`候选已写入: ${outPath}`);
 
     const version = readInstalledVersion() || 'unknown';

@@ -253,7 +253,6 @@
   "Recording": "正在录音",
   "Recording exceeds 15MB limit (${0}MB)": "录音超过 15MB 限制（${0}MB）",
   "Remove audio": "移除音频",
-  "Render math in display mode, which puts the math in display style (so \\int and \\sum are large, for example), and centers the math on the page on its own line.": "以行间模式渲染数学公式，即使用行间样式（例如 \\int 和 \\sum 会放大），并让公式在页面上独占一行居中显示。",
   "Resize terminal panes": "调整终端面板大小",
   "Reveal in Finder": "在访达中显示",
   "Run command": "运行命令",

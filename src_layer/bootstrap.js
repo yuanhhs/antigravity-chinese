@@ -7,7 +7,8 @@
  * 拿到原始响应 → 用 AST 把处于展示位置的字符串字面量替换为中文 → 以改写后的内容完成请求。
  * 其他所有请求不经过本模块（Fetch 只对匹配 pattern 的 URL 暂停）。
  *
- * 翻译结果按 (ETag + 字典哈希) 缓存到 userData/zh-cn-src-cache/，同一版本只翻译一次。
+ * 翻译结果按 (ETag + 字典哈希 + 核心模块哈希) 缓存到 userData/zh-cn-src-cache/，同一版本只翻译一次；
+ * 升级汉化包（字典或核心模块任一变化）后缓存自动失效。
  */
 'use strict';
 
@@ -33,7 +34,9 @@ function loadDict() {
     i18n = require('./agy_src_i18n.js');
     const raw = fs.readFileSync(path.join(__dirname, 'dict.json'), 'utf8');
     dict = JSON.parse(raw);
-    dictHash = crypto.createHash('sha1').update(raw).digest('hex').slice(0, 12);
+    let core = '';
+    try { core = fs.readFileSync(path.join(__dirname, 'agy_src_i18n.js'), 'utf8'); } catch (e) { /* ignore */ }
+    dictHash = crypto.createHash('sha1').update(raw).update('|').update(core).digest('hex').slice(0, 12);
 }
 
 function cacheDir() {
@@ -77,7 +80,7 @@ function translate(src, etag) {
     const file = path.join(cacheDir(), key);
     const t0 = Date.now();
     const r = i18n.translateSource(src, dict);
-    log(`translated main.js: ${r.replaced} literals, ${r.matchedKeys.size} keys, ${Date.now() - t0}ms`);
+    log(`translated main.js: ${r.replaced} literals, ${r.matchedKeys.size} keys, ${r.zones} protected zones, ${Date.now() - t0}ms`);
     try { fs.writeFileSync(file, r.code, 'utf8'); pruneCache(key); } catch (e) { log('cache write failed', e && e.message); }
     return r.code;
 }

@@ -4,7 +4,7 @@
 > **匹配版本**：Antigravity v2.15.x（v2.12+ 兼容）  
 > **核心引擎**：Node.js (无需安装 Python，零依赖，极速极稳)  
 > **汉化范围**：包括软件界面、顶部系统菜单、任务栏右键菜单、加载动画、设置面板、新手引导及登录页。  
-> **注入原理**：**源码级汉化**——主进程拦截 language_server 下发的前端 bundle（`main.js`），用 AST 按语法位置精确替换界面文案字面量；不做 DOM 层的运行时文本替换，因此聊天内容、代码、文件名、终端输出永远不会被误翻。绝不修改核心二进制，一键安装与完美还原。
+> **注入原理**：**源码级汉化**——主进程拦截 language_server 下发的前端 bundle（`main.js`），用 AST 按语法位置精确替换界面文案字面量；不做 DOM 层的运行时文本替换，因此聊天内容、代码、文件名、终端输出永远不会被误翻；负责渲染聊天内容的第三方库（KaTeX 公式、Markdown 管线、diff 等）整段划为**保护区**，字典对其中的字符串一律不生效。绝不修改核心二进制，一键安装与完美还原。
 
 ## 📸 汉化效果展示
 
@@ -88,6 +88,7 @@ node localization_engine.js --huifu               # 卸载还原
 3. **精准注入**：
    - 注入 `main.js` + `dist/agy_zh/`（**源码级汉化层**）：Antigravity 2.x 的界面代码并不在 app.asar 里，而是内嵌在 `language_server` 中、启动后通过本地 HTTPS 下发给窗口。主进程用 Chrome DevTools Protocol 的 `Fetch` 域只拦截对 `/main.js` 的这一个请求，用 acorn 解析成 AST，把处于展示位置（JSX children、label/title/placeholder/aria-label 等属性、模板字符串、工具步骤标题等）的字面量替换为中文后再交给窗口。因为是按语法位置替换，同一个单词出现在比较、路由键、CSS 里不会被误改；带插值的句子（如 `Pushed ${0} commits to ${1}`）也能整句翻译。对“既做显示又做路由键”的字符串（设置页的 General / Appearance 等），字典里用 `scope: "all"` 标记后会把整个 bundle 内的该字符串一致改名（含比较和 case 分支），逻辑不变。译文按（bundle ETag + 字典哈希）缓存在用户数据目录，同一版本只解析一次。
    - 不再注入 DOM 级文本替换脚本：聊天记录、代码、文件名、终端里的英文不会被改动。
+   - **会话框保护（渲染库保护区）**：bundle 里的第三方库（KaTeX、react-dom、remark / rehype / micromark Markdown 管线、lodash、diff 等）被打包成带许可证注释或模块标记的独立顶层语句。翻译前先把这些语句整段识别为保护区，区内既不提取候选也不做任何替换（包括 `scope: "all"`），因此字体名（`"Size"+n+"-Regular"`）、按键名表、序列化选项等库内部字符串不会被字典误伤，聊天里的公式、Markdown、代码块按原样渲染。另外，单个词与变量无空格直接拼接（`"Size"+n`）一律视为标识符片段，不当作文案。
    - 注入 `menu.js`：深度补丁系统级标题栏菜单。
    - 注入 `tray.js`：汉化托盘与右键通知状态菜单。
    - 注入 `loadingOverlay.js`：注入极具极客风格的趣味加载语：“反重力引擎已启动，正在摆脱地心引力...”。
@@ -146,6 +147,7 @@ node localization_engine.js --huifu               # 卸载还原
   - `scope: "display"`：只翻译展示位置（label / title / children 等），比较和键名保持英文；`keys` 限定只译哪些属性名下的值，`notWith` 表示所在对象含有这些兄弟属性时不译。
 - 文件按序号加载，后面的文件覆盖前面的同名键：`00_common.json` → 按主题分文件 → `70_v<版本>.json`（版本补翻） → `90_fixups.json`（修正表） → `95_scoped_identifiers.json`。
 - 安装时 `terminology.js` 会对译文做统一后处理（Git 术语保留英文、Review 统一为“审核”等）。
+- 渲染库保护区内的字符串（KaTeX 选项说明、Markdown 解析器的内部消息等）即使写进字典也不会生效。提取工具会在控制台列出每段保护区和区内被拦下的字典命中，并把“只出现在保护区内”的键写到 `temps/src_candidates.zone_only.json`，可据此清理字典。
 
 ### 🔁 软件升级后如何快速补翻（可持续汉化）
 1. 升级 Antigravity 后先照常运行 **`双击运行中文汉化工具`** 重新安装：旧字典能覆盖的文案立刻恢复中文，只有**新增 / 改动的文案**会显示英文。
@@ -154,10 +156,11 @@ node localization_engine.js --huifu               # 卸载还原
    node tools/extract_src_strings.js
    ```
    工具会自动从本机 language_server 抓取新版本的 `main.js`，与 `dicts_src/` 对比，并输出：
-   - 控制台：候选总数、已翻译 / 未翻译 / 保留英文的数量，以及“字典里有但新版本已删除”的键数量；
+   - 控制台：候选总数、已翻译 / 未翻译 / 保留英文的数量，“字典里有但新版本已删除”的键数量，以及识别到的渲染库保护区（KaTeX / react-dom / remark …）和区内被拦下的字典命中——若某段保护区拦下了明显的界面文案，说明识别范围过宽，需要调整；
    - `temps/pending_<版本号>.json`：**新版本待翻清单**——只包含字典里还没有的原文，能从旧译文推断的（大小写 / 标点 / 单复数 / 措辞微调）已预填建议译文，其余条目的值仍是英文原文；
    - `temps/src_candidates.json`：全部候选及其源码上下文样例，翻译拿不准时可查语境；
-   - `temps/src_candidates.dead.json`：新版本已不存在的键（可以删，留着也无害）。
+   - `temps/src_candidates.dead.json`：新版本已不存在的键（可以删，留着也无害）；
+   - `temps/src_candidates.zone_only.json`：只出现在渲染库保护区内的键（永远不会生效，可清理）。
 3. 把待翻清单里仍为英文的值翻成中文（专有名词、按键名写 `null`），整份文件另存为 `dicts_src/70_v<版本号>.json`。也可以直接把这份清单发给 AI 助手让它翻译。
 4. 再次运行 **`双击运行中文汉化工具`** 安装并重启软件。译文缓存按 bundle ETag + 字典哈希区分，无需手动清理。
 
@@ -184,6 +187,10 @@ node localization_engine.js --huifu               # 卸载还原
 * 查看 `%APPDATA%\Antigravity\logs\main.log`（macOS 为 `~/Library/Application Support/Antigravity/logs/main.log`）中带 `[agy-zh]` 的行：正常应有 `translated main.js: N literals` 或 `cache hit`。
 * 若出现 `debugger attach failed`，说明有其他调试器占用了窗口（例如打开了开发者工具）；关闭后重启软件即可。
 * 译文缓存位于用户数据目录的 `zh-cn-src-cache/`，删除后重启软件会自动重新生成；卸载汉化时会自动清理。
+
+### 5）聊天里的公式 / Markdown 渲染出错，提示 `Font metrics not found` 之类的英文？
+* 源码层不会改动聊天内容本身；负责渲染的第三方库整段是保护区，字典对其中的字符串不生效（详见“汉化原理说明”）。
+* 若升级汉化包后仍出现这类错误，重新运行 **`双击运行中文汉化工具`** 安装一次（译文缓存按字典与核心模块的哈希区分，升级后自动重新生成），并运行 `node tools/extract_src_strings.js` 查看保护区报告：每段保护区都会列出被拦下的字典命中，可据此定位。
 
 ---
 

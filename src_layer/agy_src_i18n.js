@@ -15,6 +15,12 @@
  *   - “枚举 -> 文案”映射对象（所有值均为 Title-case 文本）
  *   - 对 .title / .textContent / .placeholder 等 DOM 属性的字符串赋值
  *
+ * 会话框保护（渲染库保护区）：bundle 里的第三方库（KaTeX、react-dom、remark / micromark / rehype、lodash、diff …）
+ * 被打包器包成独立的顶层 IIFE 语句，前面带许可证注释或带 UMD / esbuild 模块标记。它们负责把聊天内容
+ * （Markdown、公式、代码块）渲染出来，内部字符串（字体名 "Size"+n+"-Regular"、按键名表、序列化选项）一旦被改
+ * 就会破坏渲染，而且其中没有任何界面文案。因此整段划为保护区：既不提取候选，也不做任何替换（含 scope:"all"）。
+ * 另外，单个词与变量无空格直接拼接（"Size"+n）一律视为在拼标识符，不当作文案。
+ *
  * 安全阀：除 createElement children 之外，任何字符串只要在源码别处被当作“标识符”使用
  * （=== 比较、switch case、对象键、id/type/screen 等代码键的值、Map.get/includes 等查找实参），
  * 默认就不会在源码层翻译。这样避免 title:"General" 这类既做显示又做路由键的字符串被改坏。
@@ -155,6 +161,86 @@ function isCreateElementCall(node) {
     if (!(p.type === 'Identifier' && (p.name === 'createElement' || p.name === 'jsx' || p.name === 'jsxs' || p.name === 'jsxDEV'))) return false;
     // document.createElement("div") 只有 1 个参数，不会有 children；这里要求至少 2 个参数
     return node.arguments.length >= 2 && !(c.object.type === 'Identifier' && c.object.name === 'document');
+}
+
+// ---------------------------------------------------------------------------
+// 渲染库保护区（会话框保护）
+// ---------------------------------------------------------------------------
+
+const RE_LICENSE_COMMENT = /Package:\s*[@\w./-]+|SPDX-License-Identifier|@license|@preserve|\bLicen[cs]e\b|Copyright/i;
+const RE_UMD_HEAD = /typeof exports\s*[!=]==?\s*["']object["']|module\.exports|define\.amd/;
+const RE_ESBUILD_TAIL = /globalThis\[["'][@\w./-]+["']\]\s*=|"__esModule"/;
+// 没有许可证注释 / 模块标记时，按库内部特征字符串兜底识别（打包器改变输出形态时仍能保护）
+const ZONE_FINGERPRINTS = [
+    ['katex', /Font metrics not found for font:|KaTeX parse error/],
+    ['react-dom', /Minified React error #/],
+    ['micromark', /Cannot close `|Expected `jsx` in production options/],
+    ['mdast-util-to-markdown', /Cannot serialize \w+ with `/],
+    ['lodash', /Unsupported core-js use/],
+];
+
+/** (function(){…})() / (function(){…}).call(this) / !function(){}() / (()=>{…})()：返回被立即调用的函数节点 */
+function iifeFunction(expr) {
+    let e = expr;
+    while (e && e.type === 'UnaryExpression') e = e.argument;
+    if (!e || e.type !== 'CallExpression') return null;
+    let c = e.callee;
+    if (c.type === 'MemberExpression' && !c.computed && c.property.type === 'Identifier' && (c.property.name === 'call' || c.property.name === 'apply')) c = c.object;
+    return (c.type === 'FunctionExpression' || c.type === 'ArrowFunctionExpression') ? c : null;
+}
+
+/** 给保护区起一个可读的名字：许可证注释里的 Package 名 / esbuild 全局名 / UMD 全局名 / 版权行 */
+function zoneLabel(licenseText, text) {
+    const pkgs = [...new Set([...licenseText.matchAll(/Package:\s*([@\w./-]+)/g)].map(m => m[1]))];
+    if (pkgs.length) return pkgs.slice(0, 3).join(', ') + (pkgs.length > 3 ? ` …+${pkgs.length - 3}` : '');
+    let m = /globalThis\[["']([@\w./-]+)["']\]\s*=/.exec(text.slice(-400));
+    if (m) return m[1];
+    m = /^\(function\(\)\{\(function\((\w+),(\w+)\)\{\1\.(\w+)=\2\(\)\}\)/.exec(text) || /\(function\((\w+),(\w+)\)\{\1=\1\|\|self;\2\(\1\.(\w+)=\{\}\)\}\)/.exec(text);
+    if (m) return m[3];
+    const fp = ZONE_FINGERPRINTS.find(([, re]) => re.test(text));
+    if (fp) return fp[0];
+    m = /Copyright(?:\s*\(c\))?\s*([^\n*<]{0,60})/i.exec(licenseText);
+    if (m) return ('Copyright ' + m[1].replace(/\s*(SPDX|Permission|Licensed|All rights).*$/i, '').replace(/[\s,.]+$/, '')).trim();
+    return text.slice(0, 40).replace(/\s+/g, ' ');
+}
+
+/**
+ * 找出 bundle 中的第三方库包装语句：顶层 IIFE（`(function(){…})()` 语句，或紧跟许可证注释的 `const X = function(){…}()`），
+ * 且满足其一：前面紧跟许可证注释 / 头部带 UMD 标记 / 尾部带 esbuild 全局赋值 / 含已知库的特征字符串。
+ * 应用自身的组件工厂（`const X = function(){…}()`，无许可证注释）不算库，其中的界面文案照常翻译。
+ * @returns {Array<{start:number,end:number,label:string}>} 按位置排序
+ */
+function findProtectedZones(ast, src) {
+    const zones = [];
+    const body = ast.body || [];
+    for (let i = 0; i < body.length; i++) {
+        const s = body[i];
+        const gap = src.slice(i > 0 ? body[i - 1].end : 0, s.start);
+        const licenseText = (gap.match(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g) || []).filter(c => RE_LICENSE_COMMENT.test(c)).join('\n');
+        let isIife = false;
+        if (s.type === 'ExpressionStatement') isIife = !!iifeFunction(s.expression);
+        else if (s.type === 'VariableDeclaration' && s.declarations.length === 1 && s.declarations[0].init) isIife = !!licenseText && !!iifeFunction(s.declarations[0].init);
+        if (!isIife) continue;
+        const text = src.slice(s.start, s.end);
+        let label = null;
+        if (licenseText || RE_UMD_HEAD.test(text.slice(0, 400)) || RE_ESBUILD_TAIL.test(text.slice(-400))) label = zoneLabel(licenseText, text);
+        else { const fp = ZONE_FINGERPRINTS.find(([, re]) => re.test(text)); if (fp) label = fp[0]; }
+        if (label) zones.push({ start: s.start, end: s.end, label });
+    }
+    return zones;
+}
+
+/** 返回 pos => 所在保护区下标（-1 表示不在保护区） */
+function zoneIndexer(zones) {
+    if (!zones || !zones.length) return () => -1;
+    return (pos) => {
+        let lo = 0, hi = zones.length - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1; const z = zones[mid];
+            if (pos < z.start) hi = mid - 1; else if (pos >= z.end) lo = mid + 1; else return mid;
+        }
+        return -1;
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +414,8 @@ function isChildNode(v) {
 function analyze(ast, opts = {}) {
     const force = opts.force || null;
     const displayScope = opts.displayScope || null; // Map<string, {keys:Set|null, notWith:Set|null}>：scope = "display" 的键
+    const inZone = opts.inZone || (() => -1);       // pos => 渲染库保护区下标
+    const zoneDropped = [];             // 处于展示位置但落在保护区内而被放弃的 { key, kind, zone }
     const marked = new Map();           // node -> kind
     const identifierUse = new Set();
     const parentOf = new Map();
@@ -397,6 +485,20 @@ function analyze(ast, opts = {}) {
     };
 
     const isTitleCaseText = (v) => /^[A-Z]/.test(v) && looksLikeText(v, 'prop');
+
+    // "Size"+n+"-Regular" / "sqrtSize"+k：单 token 字面量在 + 链里与非字面量操作数直接相邻（无空格边界），
+    // 是在拼字体名 / 类名 / 标识符，不是文案（文案拼接总会带空格："Worked for "+x）
+    const isGluedConcat = (node) => {
+        const p = parentOf.get(node);
+        if (!p || p.type !== 'BinaryExpression' || p.operator !== '+') return false;
+        let root = p;
+        for (let pp = parentOf.get(root); pp && pp.type === 'BinaryExpression' && pp.operator === '+'; pp = parentOf.get(root)) root = pp;
+        const ops = [];
+        (function flat(x) { if (x.type === 'BinaryExpression' && x.operator === '+') { flat(x.left); flat(x.right); } else ops.push(x); })(root);
+        const i = ops.indexOf(node);
+        const glued = (o) => !!o && !isStringLiteral(o) && o.type !== 'TemplateLiteral';
+        return glued(ops[i - 1]) || glued(ops[i + 1]);
+    };
 
     const stack = [ast];
     while (stack.length) {
@@ -515,6 +617,9 @@ function analyze(ast, opts = {}) {
     const blocked = new Map();          // 处于展示位置、但因在别处被当作标识符而未译的键 -> kinds
     for (const [node, kind] of marked) {
         const key = node.type === 'TemplateLiteral' ? templateKey(node) : node.value;
+        const zi = inZone(node.start);
+        if (zi >= 0) { zoneDropped.push({ key, kind, zone: zi }); continue; }
+        if (isStringLiteral(node) && !/\s/.test(node.value) && isGluedConcat(node)) continue;
         if (kind === 'template' || kind === 'callarg' || kind === 'weakprop' || kind === 'return' || kind === 'enummap') {
             if (inNonDisplayContext(node)) continue;
         } else if (kind === 'entity') {
@@ -557,7 +662,7 @@ function analyze(ast, opts = {}) {
         }
         result.set(node, { kind, key });
     }
-    return { marked: result, identifierUse, parentOf, childrenLists, blocked };
+    return { marked: result, identifierUse, parentOf, childrenLists, blocked, zoneDropped };
 }
 
 function parse(src) {
@@ -580,7 +685,9 @@ function extract(src, opts = {}) {
     const ast = parse(src);
     const lookup = opts.dict ? normalizeDict(opts.dict) : new Map();
     const { displayScope, allScope } = scopesOf(lookup);
-    const { marked, identifierUse, blocked } = analyze(ast, { force: opts.force || null, displayScope });
+    const zones = findProtectedZones(ast, src);
+    const inZone = zoneIndexer(zones);
+    const { marked, identifierUse, blocked, zoneDropped } = analyze(ast, { force: opts.force || null, displayScope, inZone });
     const byKey = new Map();
     const addSample = (e, node) => {
         if (e.samples.length < 2) e.samples.push(src.slice(Math.max(0, node.start - sampleLen), Math.min(src.length, node.end + sampleLen)).replace(/\s+/g, ' '));
@@ -594,23 +701,33 @@ function extract(src, opts = {}) {
     }
     // scope:"all" 的键：统计整包内的全部字面量出现次数，并检查无法一致改名的位置（标识符键名 / 非计算成员名）
     const conflicts = new Map();
+    const noteConflict = (k, what) => { if (!conflicts.has(k)) conflicts.set(k, []); const a = conflicts.get(k); if (!a.includes(what)) a.push(what); };
     if (allScope.size) {
         for (const node of allLiteralNodes(ast, allScope)) {
             const key = node.value;
+            const zi = inZone(node.start);
+            if (zi >= 0) { noteConflict(key, 'protected-zone: ' + zones[zi].label); continue; }
             let e = byKey.get(key);
             if (!e) { e = { key, kinds: new Set(), count: 0, samples: [] }; byKey.set(key, e); }
             e.kinds.add('all'); e.count++; addSample(e, node);
         }
-        for (const [key, where] of findRenameConflicts(ast, allScope)) conflicts.set(key, where);
-        for (const { tokens, sep } of splitListLiterals(ast, allScope)) {
+        for (const [key, where] of findRenameConflicts(ast, allScope)) for (const w of where) noteConflict(key, w);
+        for (const { node, tokens, sep } of splitListLiterals(ast, allScope)) {
+            if (inZone(node.start) >= 0) continue;
             for (const t of new Set(tokens)) {
                 if (!allScope.has(t)) continue;
                 const zh = lookup.get(t).zh;
-                const note = zh && zh.includes(sep) ? `split-list-unsafe(sep=${JSON.stringify(sep)})` : 'split-list';
-                if (!conflicts.has(t)) conflicts.set(t, []);
-                conflicts.get(t).push(note);
+                noteConflict(t, zh && zh.includes(sep) ? `split-list-unsafe(sep=${JSON.stringify(sep)})` : 'split-list');
             }
         }
+    }
+    // 保护区报告：每段的名字 / 大小，以及区内“本来会被翻译”的字典命中（已拦下）
+    const zoneReport = zones.map(z => ({ label: z.label, start: z.start, end: z.end, size: z.end - z.start, suppressed: {} }));
+    const zoneKeys = new Set();
+    for (const d of zoneDropped) {
+        zoneKeys.add(d.key);
+        const v = lookup.get(d.key);
+        if (v && typeof v.zh === 'string' && v.zh !== d.key) { const sup = zoneReport[d.zone].suppressed; sup[d.key] = (sup[d.key] || 0) + 1; }
     }
     const items = [];
     for (const e of byKey.values()) {
@@ -619,7 +736,7 @@ function extract(src, opts = {}) {
     items.sort((a, b) => a.key.localeCompare(b.key));
     const stats = { nodes: marked.size, unique: items.length, byKind: {} };
     for (const it of items) for (const k of it.kinds) stats.byKind[k] = (stats.byKind[k] || 0) + 1;
-    return { items, stats, conflicts, blocked };
+    return { items, stats, conflicts, blocked, zones: zoneReport, zoneKeys };
 }
 
 /** 从规范化字典中取出 scope 信息：displayScope: Map<key,{keys,notWith}>，allScope: Set<key> */
@@ -737,7 +854,8 @@ function escapeTemplateChunk(s) {
  * @param {string} src 原始 JS 源码
  * @param {Record<string,string|null>|Map<string,string|null>} dict 原文 -> 译文；值为 null / undefined / 空串 表示不翻译
  * @param {object} [opts]
- * @returns {{ code: string, replaced: number, matchedKeys: Set<string>, missing: Map<string, number> }}
+ * @returns {{ code: string, replaced: number, matchedKeys: Set<string>, missing: Map<string, number>, zones: number, details?: Array }}
+ *   opts.details = true 时额外返回每处替换的 { start, end, key, zh }（供工具统计）；zones 为渲染库保护区数量
  */
 function translateSource(src, dict, opts = {}) {
     const ast = parse(src);
@@ -745,7 +863,9 @@ function translateSource(src, dict, opts = {}) {
     const force = new Set();
     for (const [k, v] of lookup) if (typeof v.zh === 'string' && v.zh !== k) force.add(k);
     const { displayScope, allScope } = scopesOf(lookup);
-    const { marked, childrenLists } = analyze(ast, { force, displayScope });
+    const zones = findProtectedZones(ast, src);
+    const inZone = zoneIndexer(zones);
+    const { marked, childrenLists } = analyze(ast, { force, displayScope, inZone });
 
     const reps = [];
     const repNodes = new Set();
@@ -754,7 +874,7 @@ function translateSource(src, dict, opts = {}) {
     const pushRep = (node, key, zh) => {
         if (repNodes.has(node)) return;
         matchedKeys.add(key);
-        reps.push({ start: node.start, end: node.end, node, zh });
+        reps.push({ start: node.start, end: node.end, node, zh, key });
         repNodes.add(node);
     };
     for (const [node, { key }] of marked) {
@@ -768,10 +888,11 @@ function translateSource(src, dict, opts = {}) {
     }
     // scope:"all"：整包内所有等于原文的字符串字面量一致改名（含比较、case、Map 键、调用实参），
     // 以及 "A B C".split(" ") 列表字面量里的对应元素
+    // 渲染库保护区内的字面量一律跳过
     if (allScope.size) {
-        for (const node of allLiteralNodes(ast, allScope)) pushRep(node, node.value, lookup.get(node.value).zh);
+        for (const node of allLiteralNodes(ast, allScope)) { if (inZone(node.start) < 0) pushRep(node, node.value, lookup.get(node.value).zh); }
         for (const { node, sep, tokens } of splitListLiterals(ast, allScope)) {
-            if (repNodes.has(node)) continue;
+            if (repNodes.has(node) || inZone(node.start) >= 0) continue;
             const out = tokens.map(t => allScope.has(t) ? lookup.get(t).zh : t);
             if (out.some((t, i) => t !== tokens[i] && t.includes(sep))) continue; // 译文含分隔符，改了会把列表拆坏
             const keysHit = tokens.filter(t => allScope.has(t));
@@ -845,7 +966,8 @@ function translateSource(src, dict, opts = {}) {
     }
 
     const code = render(0, src.length, reps);
-    return { code, replaced, matchedKeys, missing };
+    const details = opts.details ? reps.filter(r => r.key !== undefined).map(r => ({ start: r.start, end: r.end, key: r.key, zh: r.zh })) : undefined;
+    return { code, replaced, matchedKeys, missing, details, zones: zones.length };
 }
 
-module.exports = { extract, translateSource, normalizeDict, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };
+module.exports = { extract, translateSource, normalizeDict, findProtectedZones, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };

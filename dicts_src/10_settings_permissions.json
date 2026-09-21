@@ -200,7 +200,6 @@
   "Toggle this on to allow creating new issues.": "开启后允许创建新议题。",
   "Toggle this on to allow creating new pull requests.": "开启后允许创建新的拉取请求。",
   "Toggle this on to enable read access on contents.": "开启后允许读取内容。",
-  "Trust the input, enabling all HTML features such as \\url.": "信任输入内容，启用 \\url 等所有 HTML 功能。",
   "Uploads logs, settings, and conversation summaries to your Drive.": "将日志、设置和会话摘要上传到您的云端硬盘。",
   "Use theme to be imported with settings": "使用随设置一起导入的主题",
   "Verify that these licenses were provided by your administrator and that you trust the project ID before proceeding. Account activity and data may be logged by your organization.": "继续之前，请确认这些许可证由您的管理员提供，并且您信任该项目 ID。您所在的组织可能会记录账户活动和数据。",

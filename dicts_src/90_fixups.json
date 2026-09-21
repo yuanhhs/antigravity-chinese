@@ -16,8 +16,6 @@
   "All args must be strings": "所有参数必须是字符串",
   "Google-wide Allowlist: If you are eligible, commands in the this list run without your approval, in addition to the below options. This policy applies to any host, regardless of internet connectivity. Check on eligibility on go/can-i-autorun-agents.\n\nNote: please reload for these changes to take effect.": "Google 全局允许列表：如果您符合条件，此列表中的命令无需您的批准即可运行（在下方选项之外额外生效）。该策略适用于任何主机，无论网络连接状态如何。请在 go/can-i-autorun-agents 查看资格。\n\n注意：请重新加载以使更改生效。",
   "Sets the `workspaceUri` URL parameter and reloads, repointing the active workspace. Pick a folder from an existing project or enter a custom URI (e.g. file:///google/src/cloud/<user>/<client>/google3).": "设置 `workspaceUri` URL 参数并重新加载，把活跃工作区指向新位置。可从现有项目中选择文件夹，或输入自定义 URI（例如 file:///google/src/cloud/<user>/<client>/google3）。",
-  "If non-zero, all user-specified sizes, e.g. in \\rule{500em}{500em}, will be capped to maxSize ems. Otherwise, elements and spaces can be arbitrarily large": "若不为零，所有用户指定的尺寸（例如 \\rule{500em}{500em} 中的尺寸）都会被限制为最多 maxSize em。否则元素和间距可以任意大",
-  "Specifies a minimum thickness, in ems, for fraction lines, `\\sqrt` top lines, `{array}` vertical lines, `\\hline`, `\\hdashline`, `\\underline`, `\\overline`, and the borders of `\\fbox`, `\\boxed`, and `\\fcolorbox`.": "指定分数线、`\\sqrt` 顶线、`{array}` 竖线、`\\hline`、`\\hdashline`、`\\underline`、`\\overline` 以及 `\\fbox`、`\\boxed`、`\\fcolorbox` 边框的最小粗细（单位 em）。",
   "Antigravity": null,
   "Buganizer": null,
   "Critique": null,
