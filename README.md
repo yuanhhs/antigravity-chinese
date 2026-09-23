@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yuanhhs/antigravity-chinese/releases/latest"><img src="https://img.shields.io/badge/Release-v2.15.1-brightgreen.svg?style=flat-square" alt="Release Version"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Antigravity-v2.15.1%20%28%E5%85%BC%E5%AE%B9%20v2.12%2B%29-blue.svg?style=flat-square" alt="Compatible Version"></a>
+  <a href="https://github.com/yuanhhs/antigravity-chinese/releases/latest"><img src="https://img.shields.io/badge/Release-v2.16.0-brightgreen.svg?style=flat-square" alt="Release Version"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Antigravity-v2.16.0%20%28%E5%85%BC%E5%AE%B9%20v2.12%2B%29-blue.svg?style=flat-square" alt="Compatible Version"></a>
   <a href="#"><img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-informational.svg?style=flat-square" alt="Platform Support"></a>
   <a href="#"><img src="https://img.shields.io/badge/Runtime-Node.js%20(Zero%20Dependency)-orange.svg?style=flat-square" alt="Runtime"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-purple.svg?style=flat-square" alt="License"></a>
@@ -15,7 +15,7 @@
 ---
 
 > [!NOTE]
-> **适用版本**：**Antigravity v2.15.1**（深度向下兼容 v2.12.x 及以上版本）  
+> **适用版本**：**Antigravity v2.16.0**（深度向下兼容 v2.12.x 及以上版本）<br>
 > **核心引擎**：纯原生 Node.js（无需 Python，零外部依赖，极速极稳）  
 > **覆盖范围**：涵盖主界面、系统菜单栏、托盘右键菜单、设置中心、智能体对话面板、新手引导及加载动画。  
 > **底层原理**：**源码级 AST 精准汉化**——在 Chrome DevTools Protocol 拦截层直接解析前端 bundle（`main.js`），按语法树定位并替换界面文案字面量；**会话框渲染库（KaTeX 公式 / Markdown 管线 / diff 等）设立独立沙箱保护区**，绝不触碰聊天记录、代码块、文件名与终端，确保零误伤、无污染、完美可逆。
@@ -63,6 +63,7 @@ antigravity-chinese/
 │   ├── 60_misc_a.json          # 综合杂项 A
 │   ├── 61_misc_b.json          # 综合杂项 B
 │   ├── 70_v2.15.json           # v2.15.x 增量补翻词库
+│   ├── 71_v2.16.json           # v2.16.x 增量补翻词库
 │   ├── 90_fixups.json          # 最终人工修正与强制微调表
 │   └── 95_scoped_identifiers.json # 作用域路由标识符（带 scope 标记）
 ├── src_layer/                  # 源码注入层运行时（安装时打包入 asar）
@@ -81,7 +82,7 @@ antigravity-chinese/
 
 * **方式 A：下载 Release 压缩包（最便捷 📦）**
   1. 前往 GitHub 的 [**Releases 发布页面**](https://github.com/yuanhhs/antigravity-chinese/releases)；
-  2. 下载最新的 `Antigravity-Chinese-v2.15.1.zip`；
+  2. 下载最新的 `Antigravity-Chinese-v2.16.0.zip`；
   3. 解压到本地任意目录（例如 `下载` 文件夹）。
 
 * **方式 B：通过 Git 命令行克隆（开发者推荐 💻）**
@@ -169,7 +170,7 @@ Antigravity 2.x 的界面渲染架构与常规 Electron 应用不同：其界面
 
 ## 📝 极客进阶：软件升级后如何快速补翻
 
-当 Antigravity 升级新版本时（例如从 2.15.1 升级到后续版本），您只需：
+当 Antigravity 升级新版本时（例如从 2.16.0 升级到后续版本），您只需：
 
 1. 升级后先运行一次 **`双击运行中文汉化工具`**（旧词条瞬间生效）；
 2. 保持软件运行，在终端执行对比工具：

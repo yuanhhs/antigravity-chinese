@@ -179,6 +179,40 @@ const ZONE_FINGERPRINTS = [
     ['lodash', /Unsupported core-js use/],
 ];
 
+// 会话中的工具执行摘要（"Edited …" / "Explored …" / "Ran …" / "Working"）应保持官方英文。
+// 这些短词也用于普通设置与状态界面，不能通过删除全局字典项来排除；改用该摘要函数独有的
+// 字面量组合识别其函数体，避免依赖每个版本都会变化的压缩函数名。
+const AGENT_TOOL_SUMMARY_LITERALS = ['Editing', 'Edited', 'Exploring', 'Explored', 'Running', 'Ran', 'Working', 'Done'];
+
+function findAgentToolSummaryZones(ast, existingZones) {
+    const literalsByFunction = new Map();
+    const stack = [{ node: ast, owner: null }];
+    while (stack.length) {
+        const { node, owner: parentOwner } = stack.pop();
+        const isFunction = node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression';
+        const owner = isFunction ? node : parentOwner;
+        if (isFunction && !literalsByFunction.has(node)) literalsByFunction.set(node, new Set());
+        if (owner && isStringLiteral(node)) literalsByFunction.get(owner).add(node.value);
+        for (const key in node) {
+            if (key === 'type' || key === 'start' || key === 'end' || key === 'loc' || key === 'range') continue;
+            const value = node[key];
+            if (Array.isArray(value)) {
+                for (const child of value) if (isChildNode(child)) stack.push({ node: child, owner });
+            } else if (isChildNode(value)) {
+                stack.push({ node: value, owner });
+            }
+        }
+    }
+
+    const zones = [];
+    for (const [fn, literals] of literalsByFunction) {
+        if (!AGENT_TOOL_SUMMARY_LITERALS.every(text => literals.has(text))) continue;
+        if (existingZones.some(zone => fn.start >= zone.start && fn.end <= zone.end)) continue;
+        zones.push({ start: fn.start, end: fn.end, label: 'agent-tool-summary' });
+    }
+    return zones;
+}
+
 /** (function(){…})() / (function(){…}).call(this) / !function(){}() / (()=>{…})()：返回被立即调用的函数节点 */
 function iifeFunction(expr) {
     let e = expr;
@@ -227,6 +261,8 @@ function findProtectedZones(ast, src) {
         else { const fp = ZONE_FINGERPRINTS.find(([, re]) => re.test(text)); if (fp) label = fp[0]; }
         if (label) zones.push({ start: s.start, end: s.end, label });
     }
+    zones.push(...findAgentToolSummaryZones(ast, zones));
+    zones.sort((a, b) => a.start - b.start || b.end - a.end);
     return zones;
 }
 
@@ -356,13 +392,25 @@ function templateKey(node) {
  * 这里只翻译已知、结构固定的配额提示，避免把普通服务端内容或会话正文误当成界面文案。
  * 此函数还会被序列化后内联进前端 bundle，因此必须保持完全自包含。
  */
-function translateQuotaDescription(value) {
+function translateQuotaText(value) {
     if (typeof value !== 'string') return value;
-    const match = /^You have used (some|all) of your (weekly|daily) limit, it will fully refresh in (.+)\.$/i.exec(value.trim());
+    const labels = {
+        'Gemini Models': 'Gemini 模型',
+        'Weekly Limit Remaining': '每周剩余限额',
+        'Five Hour Limit Remaining': '五小时剩余限额',
+        'Claude and GPT models': 'Claude 和 GPT 模型',
+    };
+    if (labels[value]) return labels[value];
+
+    const match = /^You have used (some|all) of your (weekly|daily|\d+-hour) limit, it will fully refresh in (.+)\.$/i.exec(value.trim());
     if (!match) return value;
 
     const amount = match[1].toLowerCase() === 'all' ? '全部' : '部分';
-    const period = match[2].toLowerCase() === 'daily' ? '每日' : '每周';
+    const periodKey = match[2].toLowerCase();
+    const hourLimit = /^(\d+)-hour$/.exec(periodKey);
+    const period = periodKey === 'daily' ? '每日'
+        : periodKey === 'weekly' ? '每周'
+            : hourLimit[1] === '5' ? '五小时' : `${hourLimit[1]} 小时`;
     const duration = match[3]
         .replace(/\bless than (?:a|one) minute\b/gi, '不到 1 分钟')
         .replace(/\b(\d+)\s+weeks?\b/gi, '$1 周')
@@ -928,15 +976,36 @@ function translateSource(src, dict, opts = {}) {
     // 配额摘要的 refreshText 来自接口字段（a.description），不是源码字面量。
     // 仅在同时具有 remainingFraction/subtext/disabled 的配额视图模型中包装该动态值，
     // 让已知配额句式在运行时进入受限翻译函数；其他 refreshText/description 均不处理。
-    const runtimeTextFn = translateQuotaDescription.toString();
-    for (const [node, parent] of parentOf) {
-        if (!parent || parent.type !== 'Property' || parent.value !== node || getKeyName(parent) !== 'refreshText') continue;
-        if (isStringLiteral(node) || node.type === 'TemplateLiteral' || inZone(node.start) >= 0) continue;
-        const obj = parentOf.get(parent);
-        if (!obj || obj.type !== 'ObjectExpression') continue;
-        const siblingKeys = new Set(obj.properties.map(getKeyName).filter(Boolean));
-        if (!siblingKeys.has('remainingFraction') || !siblingKeys.has('subtext') || !siblingKeys.has('disabled')) continue;
+    const runtimeTextFn = translateQuotaText.toString();
+    const runtimeWrappedNodes = new Set();
+    const wrapRuntimeText = (node) => {
+        if (runtimeWrappedNodes.has(node)) return;
         reps.push({ start: node.start, end: node.end, node, runtimeTextFn });
+        runtimeWrappedNodes.add(node);
+    };
+    const isInsideQuotaView = (node) => {
+        let current = node;
+        while ((current = parentOf.get(current))) {
+            if (current.type !== 'FunctionDeclaration' && current.type !== 'FunctionExpression' && current.type !== 'ArrowFunctionExpression') continue;
+            const functionSource = src.slice(current.start, current.end);
+            if (/\.buckets\b/.test(functionSource) && /\bremainingFraction\b/.test(functionSource) && /\brefreshText\b/.test(functionSource)) return true;
+        }
+        return false;
+    };
+    for (const [node, parent] of parentOf) {
+        if (!parent || inZone(node.start) >= 0) continue;
+        if (parent.type === 'Property' && parent.value === node && getKeyName(parent) === 'refreshText'
+            && !isStringLiteral(node) && node.type !== 'TemplateLiteral') {
+            const obj = parentOf.get(parent);
+            if (!obj || obj.type !== 'ObjectExpression') continue;
+            const siblingKeys = new Set(obj.properties.map(getKeyName).filter(Boolean));
+            if (siblingKeys.has('remainingFraction') && siblingKeys.has('subtext') && siblingKeys.has('disabled')) wrapRuntimeText(node);
+            continue;
+        }
+        if (node.type !== 'MemberExpression' || node.computed || node.property.type !== 'Identifier' || node.property.name !== 'displayName') continue;
+        const isLabelValue = parent.type === 'Property' && parent.value === node && getKeyName(parent) === 'label';
+        const isElementChild = parent.type === 'CallExpression' && isCreateElementCall(parent) && parent.arguments.indexOf(node) >= 2;
+        if ((isLabelValue || isElementChild) && isInsideQuotaView(node)) wrapRuntimeText(node);
     }
 
     // 复数后缀联动：children 序列中形如  n," item",n===1?"":"s"  的 "s"/"es" 分支，
@@ -1010,4 +1079,4 @@ function translateSource(src, dict, opts = {}) {
     return { code, replaced, matchedKeys, missing, details, zones: zones.length };
 }
 
-module.exports = { extract, translateSource, translateQuotaDescription, normalizeDict, findProtectedZones, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };
+module.exports = { extract, translateSource, translateQuotaText, normalizeDict, findProtectedZones, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };
