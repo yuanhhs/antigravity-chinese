@@ -6,15 +6,15 @@ const { translateQuotaText, translateSource } = require('../src_layer/agy_src_i1
 
 assert.strictEqual(
     translateQuotaText('You have used some of your weekly limit, it will fully refresh in 3 days, 14 hours.'),
-    '您已使用部分每周限额，将在 3 天 14 小时后完全恢复。'
+    '你已使用部分每周限额，将在3 天 14 小时后完全恢复。'
 );
 assert.strictEqual(
     translateQuotaText('You have used all of your daily limit, it will fully refresh in less than a minute.'),
-    '您已使用全部每日限额，将在 不到 1 分钟后完全恢复。'
+    '你已使用全部每日限额，将在不到 1 分钟后完全恢复。'
 );
 assert.strictEqual(
     translateQuotaText('You have used some of your 5-hour limit, it will fully refresh in 4 hours, 39 minutes.'),
-    '您已使用部分五小时限额，将在 4 小时 39 分钟后完全恢复。'
+    '你已使用部分五小时限额，将在4 小时 39 分钟后完全恢复。'
 );
 assert.strictEqual(translateQuotaText('Server-provided text'), 'Server-provided text');
 assert.strictEqual(translateQuotaText('Gemini Models'), 'Gemini 模型');
@@ -38,7 +38,7 @@ globalThis.result = {
 const translated = translateSource(source, {});
 const context = {};
 vm.runInNewContext(translated.code, context);
-assert.strictEqual(context.result.refreshText, '您已使用部分每周限额，将在 3 天 14 小时后完全恢复。');
+assert.strictEqual(context.result.refreshText, '你已使用部分每周限额，将在3 天 14 小时后完全恢复。');
 
 const unrelated = 'globalThis.result={refreshText:value,disabled:false};';
 assert.strictEqual(translateSource(unrelated, {}).code, unrelated);

@@ -22,7 +22,8 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { extract, normalizeDict } = require('../src_layer/agy_src_i18n.js');
+const { extract, normalizeDict, validateTranslation } = require('../src_layer/agy_src_i18n.js');
+const { loadDictionary } = require('../dictionary');
 
 const args = process.argv.slice(2);
 const getOpt = (name, def) => { const i = args.indexOf(name); return i !== -1 ? args[i + 1] : def; };
@@ -34,14 +35,7 @@ const optValues = new Set(['--out', '--pending'].map(o => getOpt(o)).filter(Bool
 const srcPath = args.find(a => !a.startsWith('--') && !optValues.has(a));
 
 function loadDicts(dir) {
-    const all = {};
-    if (!fs.existsSync(dir)) return all;
-    for (const f of fs.readdirSync(dir).sort()) {
-        if (!f.endsWith('.json')) continue;
-        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-        for (const [k, v] of Object.entries(data)) all[k] = v;
-    }
-    return all;
+    return loadDictionary(dir);
 }
 
 /** 从已翻译条目里为新原文找“相近旧原文”，预填建议译文（大小写 / 标点 / 复数 / 尾部省略号差异） */
@@ -85,7 +79,7 @@ function readInstalledVersion() {
     }
     for (const asar of candidates) {
         try {
-            for (const file of [asar + '.bak', asar]) {
+            for (const file of [asar, asar + '.bak']) {
                 if (!fs.existsSync(file)) continue;
                 const fd = fs.openSync(file, 'r');
                 const head = Buffer.alloc(16); fs.readSync(fd, head, 0, 16, 0);
@@ -115,6 +109,7 @@ async function main() {
         src = await fetchLiveBundle();
     }
     const dict = loadDicts(dictDir);
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
     const lookup = normalizeDict(dict);
     // 字典里已有的键即使形态上不像文案（如 "${0} tab"）也要参与统计，避免被误报为“源码已不存在”
     const force = new Set([...lookup].filter(([k, v]) => typeof v.zh === 'string').map(([k]) => k));
@@ -124,6 +119,7 @@ async function main() {
     const out = {};
     const byKindMissing = {};
     const pending = {};
+    const context = {};
     const suggest = buildSuggester(lookup);
     let suggested = 0;
     for (const it of items) {
@@ -135,8 +131,13 @@ async function main() {
             untranslated++;
             for (const k of it.kinds) byKindMissing[k] = (byKindMissing[k] || 0) + 1;
             const s = suggest(it.key);
-            if (s) { pending[it.key] = s.zh; suggested++; }
+            if (s && !validateTranslation(it.key, s.zh).length) { pending[it.key] = s.zh; suggested++; }
             else pending[it.key] = it.key; // 值 = 原文 表示“待翻”，运行时会原样跳过，不会误伤
+            context[it.key] = {
+                kinds: it.kinds, count: it.count, risky: it.risky, samples: it.samples,
+                placeholders: it.key.match(/\$\{\d+\}/g) || [],
+                suggestion: s ? { ...s, safe: !validateTranslation(it.key, s.zh).length } : null,
+            };
         }
         out[it.key] = { zh: v === undefined ? '' : (v.scope ? { zh: v.zh, scope: v.scope } : v.zh), kinds: it.kinds, count: it.count, risky: it.risky, samples: it.samples };
     }
@@ -187,6 +188,9 @@ async function main() {
 
     const version = readInstalledVersion() || 'unknown';
     const pendingPath = getOpt('--pending', path.join(root, 'temps', `pending_${version}.json`));
+    fs.mkdirSync(path.dirname(pendingPath), { recursive: true });
+    const contextPath = pendingPath.replace(/(?:\.json)?$/, '.context.json');
+    fs.writeFileSync(contextPath, JSON.stringify(context, null, 2) + '\n', 'utf8');
     if (untranslated) {
         const sorted = Object.fromEntries(Object.keys(pending).sort((a, b) => a.localeCompare(b)).map(k => [k, pending[k]]));
         fs.writeFileSync(pendingPath, JSON.stringify(sorted, null, 2) + '\n', 'utf8');
@@ -243,4 +247,5 @@ async function fetchLiveBundle() {
     throw new Error('无法从本机 language_server 端口下载 main.js，请手动传入路径');
 }
 
-main().catch(e => { console.error(e.message); process.exit(1); });
+if (require.main === module) main().catch(e => { console.error(e.message); process.exit(1); });
+module.exports = { buildSuggester, readInstalledVersion };

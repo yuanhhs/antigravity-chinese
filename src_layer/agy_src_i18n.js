@@ -400,7 +400,7 @@ function translateQuotaText(value) {
         'Five Hour Limit Remaining': '五小时剩余限额',
         'Claude and GPT models': 'Claude 和 GPT 模型',
     };
-    if (labels[value]) return labels[value];
+    if (Object.prototype.hasOwnProperty.call(labels, value)) return labels[value];
 
     const match = /^You have used (some|all) of your (weekly|daily|\d+-hour) limit, it will fully refresh in (.+)\.$/i.exec(value.trim());
     if (!match) return value;
@@ -419,7 +419,7 @@ function translateQuotaText(value) {
         .replace(/\b(\d+)\s+minutes?\b/gi, '$1 分钟')
         .replace(/\b(\d+)\s+seconds?\b/gi, '$1 秒')
         .replace(/,\s*/g, ' ');
-    return `您已使用${amount}${period}限额，将在 ${duration}后完全恢复。`;
+    return `你已使用${amount}${period}限额，将在${duration}后完全恢复。`;
 }
 
 function isStringLiteral(n) {
@@ -895,6 +895,41 @@ function findRenameConflicts(ast, keys) {
 }
 
 /** 把字典（值为 字符串 / null / "" / {zh, scope}）规范化为 Map<key, {zh, scope}> */
+function placeholderCounts(text) {
+    const counts = new Map();
+    for (const token of text.match(/\$\{\d+\}/g) || []) counts.set(token, (counts.get(token) || 0) + 1);
+    return counts;
+}
+
+// 省略参数必须明确声明；运行时还会确认它确实是英文复数后缀。
+function validateTranslation(key, zh, entry = {}) {
+    if (typeof zh !== 'string') return [];
+    const source = placeholderCounts(key), target = placeholderCounts(zh);
+    const omitted = entry.omitPlaceholders || [];
+    const errors = [];
+    if (!Array.isArray(omitted) || omitted.some(i => !Number.isInteger(i) || i < 0)) return ['omitPlaceholders 必须是非负整数数组'];
+    for (const i of omitted) {
+        const token = '${' + i + '}';
+        if (!source.has(token) || target.has(token)) errors.push(`无效的省略声明 ${token}`);
+    }
+    for (const token of new Set([...source.keys(), ...target.keys()])) {
+        if ((source.get(token) || 0) === (target.get(token) || 0)) continue;
+        const index = Number(token.slice(2, -1));
+        if (source.has(token) && !target.has(token) && omitted.includes(index)) continue;
+        errors.push(`参数 ${token} 次数不一致`);
+    }
+    return errors;
+}
+
+function isPluralSuffix(node) {
+    const suffix = n => isStringLiteral(n) && ['', 's', 'es'].includes(n.value);
+    const pure = n => n && (n.type === 'Identifier' || n.type === 'Literal'
+        || (n.type === 'MemberExpression' && pure(n.object) && (!n.computed || pure(n.property)))
+        || (n.type === 'BinaryExpression' && pure(n.left) && pure(n.right)));
+    return node && node.type === 'ConditionalExpression' && pure(node.test)
+        && suffix(node.consequent) && suffix(node.alternate);
+}
+
 function normalizeDict(dict) {
     const out = new Map();
     const entries = dict instanceof Map ? dict.entries() : Object.entries(dict);
@@ -906,7 +941,7 @@ function normalizeDict(dict) {
             const scope = v.scope === 'all' || v.scope === 'display' ? v.scope : null;
             const keys = Array.isArray(v.keys) && v.keys.length ? new Set(v.keys) : null;
             const notWith = Array.isArray(v.notWith) && v.notWith.length ? new Set(v.notWith) : null;
-            out.set(k, { zh, scope, keys, notWith });
+            out.set(k, { zh, scope, keys, notWith, omitPlaceholders: v.omitPlaceholders, note: v.note });
         }
     }
     return out;
@@ -942,8 +977,16 @@ function translateSource(src, dict, opts = {}) {
     const repNodes = new Set();
     const matchedKeys = new Set();
     const missing = new Map();
+    const rejected = new Map();
     const pushRep = (node, key, zh) => {
         if (repNodes.has(node)) return;
+        const entry = lookup.get(key) || {};
+        const errors = validateTranslation(key, zh, entry);
+        if (errors.length) { rejected.set(key, errors); return; }
+        if ((entry.omitPlaceholders || []).some(i => node.type !== 'TemplateLiteral' || !isPluralSuffix(node.expressions[i]))) {
+            rejected.set(key, ['省略的参数不是可安全移除的英文复数后缀']);
+            return;
+        }
         matchedKeys.add(key);
         reps.push({ start: node.start, end: node.end, node, zh, key });
         repNodes.add(node);
@@ -1076,7 +1119,7 @@ function translateSource(src, dict, opts = {}) {
 
     const code = render(0, src.length, reps);
     const details = opts.details ? reps.filter(r => r.key !== undefined).map(r => ({ start: r.start, end: r.end, key: r.key, zh: r.zh })) : undefined;
-    return { code, replaced, matchedKeys, missing, details, zones: zones.length };
+    return { code, replaced, matchedKeys, missing, rejected, details, zones: zones.length };
 }
 
-module.exports = { extract, translateSource, translateQuotaText, normalizeDict, findProtectedZones, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };
+module.exports = { extract, translateSource, translateQuotaText, normalizeDict, validateTranslation, findProtectedZones, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };

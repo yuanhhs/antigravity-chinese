@@ -81,6 +81,7 @@ function translate(src, etag) {
     const t0 = Date.now();
     const r = i18n.translateSource(src, dict);
     log(`translated main.js: ${r.replaced} literals, ${r.matchedKeys.size} keys, ${r.zones} protected zones, ${Date.now() - t0}ms`);
+    if (r.rejected.size) log('skipped invalid translations:', JSON.stringify([...r.rejected]));
     try { fs.writeFileSync(file, r.code, 'utf8'); pruneCache(key); } catch (e) { log('cache write failed', e && e.message); }
     return r.code;
 }

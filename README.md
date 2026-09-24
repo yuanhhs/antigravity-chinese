@@ -1,12 +1,12 @@
 # Antigravity 简体中文汉化
 
-适配 **Antigravity 2.16.0**，提供界面、设置、系统菜单和托盘菜单的简体中文翻译。支持 Windows 和 macOS，需安装 [Node.js LTS](https://nodejs.org/)（含 npm）。
+适配 **Antigravity 2.17.0**，提供界面、设置、系统菜单和托盘菜单的简体中文翻译。支持 Windows 和 macOS，需安装 [Node.js LTS](https://nodejs.org/)（含 npm）。
 
 [下载汉化包](https://github.com/yuanhhs/antigravity-chinese/releases/latest)
 
 ## 安装
 
-1. 下载 `Antigravity-Chinese-v2.16.0.zip` 并解压。
+1. 下载 `2.17.0.zip` 并解压。
 2. 完全退出 Antigravity。
 3. Windows 运行 `双击运行中文汉化工具.bat`；macOS 运行 `双击运行中文汉化工具.command`。
 4. 选择 `1` 安装，完成后重新打开软件。
@@ -37,7 +37,7 @@ node localization_engine.js --huifu                 # 卸载
 node tools/extract_src_strings.js
 ```
 
-工具会在 `temps/pending_<版本号>.json` 生成待翻清单。核对建议译文，保留 `${0}` 等动态参数，将补充词条保存到 `dicts_src/` 下的 JSON 文件，再重新安装汉化。
+工具会在 `temps/pending_<版本号>.json` 生成待翻清单，同名 `.context.json` 提供源码语境。保留 `${0}` 等动态参数，补充词条后运行 `node tools/validate_translations.js` 校验，再重新安装汉化。原生菜单译文位于 `locales/zh-CN.json`，详见[翻译维护约定](docs/translation-style.md)。
 
 ## 常见问题
 

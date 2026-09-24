@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const child_process = require('child_process');
-const { applyTerminologyPolicy } = require('./terminology');
+const { loadDictionary, validateNativeMessages } = require('./dictionary');
+const nativeMessages = require('./locales/zh-CN.json');
 
 // 旧版 DOM 级汉化层（preload.js 里的 MutationObserver 引擎）的注入标记：已移除该层，仅用于清理历史注入
 const LEGACY_DOM_SIGNATURE_START = "/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */";
@@ -17,22 +18,7 @@ const srcDictsFolder = () => (typeof USE_TW !== 'undefined' && USE_TW) ? 'dicts_
 function loadSrcDictionary() {
     const dir = path.join(__dirname, srcDictsFolder());
     if (!fs.existsSync(dir)) return null;
-    const merged = {};
-    let files = 0;
-    for (const file of fs.readdirSync(dir).sort()) {
-        if (!file.endsWith('.json')) continue;
-        try {
-            const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8'));
-            for (const [k, v] of Object.entries(data)) {
-                if (v === null || typeof v === 'string') merged[k] = applyTerminologyPolicy(k, v);
-                else if (v && typeof v === 'object' && typeof v.zh === 'string') merged[k] = { ...v, zh: applyTerminologyPolicy(k, v.zh) };
-            }
-            files++;
-        } catch (e) {
-            console.warn(`[警告] 源码级字典 ${file} 解析失败，已跳过: ${e.message}`);
-        }
-    }
-    return files ? merged : null;
+    return loadDictionary(dir);
 }
 
 function cleanSrcBootstrap(content) {
@@ -418,38 +404,7 @@ function install20(resourcesDir) {
     // ==========================================
     // Antigravity Native Menu Chinese Translation
     // ==========================================
-    const translations = {
-        'File': '文件',
-        'Edit': '编辑',
-        'View': '视图',
-        'Window': '窗口',
-        'Help': '帮助',
-        'New Window': '新建窗口',
-        'Create Project': '创建项目',
-        'Command Palette': '命令面板',
-        'Docs': '文档',
-        'Check for Updates': '检查更新',
-        'Toggle Developer Tools': '切换开发者工具',
-        'Undo': '撤销',
-        'Redo': '重做',
-        'Cut': '剪切',
-        'Copy': '复制',
-        'Paste': '粘贴',
-        'Select All': '全选',
-        'Minimize': '最小化',
-        'Maximize': '最大化',
-        'Close': '关闭',
-        'Zoom': '缩放',
-        'Reset Zoom': '重置缩放',
-        'Zoom In': '放大',
-        'Zoom Out': '缩小',
-        'Toggle Full Screen': '切换全屏',
-        'Split Terminal': '拆分终端',
-        'Split Conversation Horizontally': '水平拆分会话',
-        'Split Conversation Vertically': '垂直拆分会话',
-        'Find in conversation': '在会话中查找',
-        'Version': '版本'
-    };
+    const translations = ${JSON.stringify(nativeMessages.menu)};
     function translateMenu(items) {
         for (const item of items) {
             let label = item.label || '';
@@ -460,12 +415,12 @@ function install20(resourcesDir) {
                 mnemonic = "(&" + m[1] + ")";
                 cleanLabel = label.replace('&', '');
             }
-            if (translations[cleanLabel]) {
+            if (Object.prototype.hasOwnProperty.call(translations, cleanLabel)) {
                 item.label = translations[cleanLabel] + mnemonic;
-            } else if (translations[label]) {
+            } else if (Object.prototype.hasOwnProperty.call(translations, label)) {
                 item.label = translations[label];
             } else if (/^Version\\s*([\\d\\.]*)$/i.test(cleanLabel)) {
-                item.label = cleanLabel.replace(/^Version\\s*([\\d\\.]*)$/i, (match, v) => v ? "版本 " + v : "版本");
+                item.label = cleanLabel.replace(/^Version\\s*([\\d\\.]*)$/i, (match, v) => v ? ${JSON.stringify(nativeMessages.status.version + " ")} + v : ${JSON.stringify(nativeMessages.status.version)});
             }
             if (item.submenu && item.submenu.items) {
                 translateMenu(item.submenu.items);
@@ -499,13 +454,9 @@ function install20(resourcesDir) {
         const targetCreate = "function createTray(actions) {";
         const replacementCreate = `function createTray(actions) {
     /* --- TRAY TRANSLATION START --- */
-    const translations = {
-        'No agents running': '无运行中的智能体',
-        'Open Antigravity': '打开反重力智能编程',
-        'Quit': '退出'
-    };
+    const translations = ${JSON.stringify(nativeMessages.tray)};
     for (const item of actions) {
-        if (translations[item.label]) {
+        if (Object.prototype.hasOwnProperty.call(translations, item.label)) {
             item.label = translations[item.label];
         }
     }
@@ -532,7 +483,7 @@ function install20(resourcesDir) {
 
         // 3. 使用正则替换 updateTrayAgentCount 里的动态显示文本
         const countRegex = /countItem\.label\s*=\s*\([\s\S]*?' running';/g;
-        const replacementCount = "countItem.label = count > 0 ? `${count} 个智能体运行中` : '无运行中的智能体';";
+        const replacementCount = `countItem.label = count > 0 ? ${JSON.stringify(nativeMessages.status.agentsRunning)}.replace('\${0}', String(count)) : ${JSON.stringify(nativeMessages.tray['No agents running'])};`;
         trayPatched = trayPatched.replace(countRegex, replacementCount);
         
         fs.writeFileSync(trayPath, trayPatched, 'utf-8');
@@ -546,7 +497,7 @@ function install20(resourcesDir) {
         let loadingContent = fs.readFileSync(loadingPath, 'utf-8');
         
         const targetText = '<div class="text">Loading Antigravity</div>';
-        const replacementText = '<div class="text">反重力引擎已启动，正在努力摆脱地心引力...</div>';
+        const replacementText = '<div class="text">' + nativeMessages.status.loading + '</div>';
         
         loadingContent = loadingContent.replace(targetText, replacementText);
         
@@ -564,9 +515,9 @@ function install20(resourcesDir) {
         const targetOptions = `                title: 'Check for Updates',
                 message: 'No updates available',
                 buttons: ['OK'],`;
-        const replacementOptions = `                title: '检查更新',
-                message: '暂无可用更新',
-                buttons: ['确定'],`;
+        const replacementOptions = `                title: ${JSON.stringify(nativeMessages.updater.title)},
+                message: ${JSON.stringify(nativeMessages.updater.message)},
+                buttons: [${JSON.stringify(nativeMessages.updater.confirm)}],`;
         
         updaterContent = updaterContent.replace(targetOptions, replacementOptions);
         fs.writeFileSync(updaterPath, updaterContent, 'utf-8');
@@ -575,7 +526,7 @@ function install20(resourcesDir) {
 
     // 3.5 注入源码级汉化层（拦截 language_server 下发的前端 bundle，按 AST 替换界面文案）
     console.log(`[修改] 正在注入源码级汉化层 (dist/agy_zh)...`);
-    injectSrcLayer(tempDir);
+    if (!injectSrcLayer(tempDir)) return false;
 
     // 4. 重新打包
     console.log(`[打包] 正在将修改后的内容打包回 app.asar...`);
@@ -646,6 +597,12 @@ function main() {
             console.log("[提示] --brand-title 选项已移除（左上角品牌名保持官方英文），已忽略。");
             i++;
         }
+    }
+
+    // 修改安装包、关闭客户端前先校验全部词库。
+    if (!huifu) {
+        if (!loadSrcDictionary()) throw new Error('未找到界面词库');
+        validateNativeMessages(nativeMessages);
     }
 
     // 1. 探测路径

@@ -1,0 +1,49 @@
+{
+  "menu": {
+    "File": "文件",
+    "Edit": "编辑",
+    "View": "视图",
+    "Window": "窗口",
+    "Help": "帮助",
+    "New Window": "新建窗口",
+    "Create Project": "创建项目",
+    "Command Palette": "命令面板",
+    "Docs": "文档",
+    "Check for Updates": "检查更新",
+    "Toggle Developer Tools": "切换开发者工具",
+    "Undo": "撤销",
+    "Redo": "重做",
+    "Cut": "剪切",
+    "Copy": "复制",
+    "Paste": "粘贴",
+    "Select All": "全选",
+    "Minimize": "最小化",
+    "Maximize": "最大化",
+    "Close": "关闭",
+    "Zoom": "缩放",
+    "Reset Zoom": "重置缩放",
+    "Zoom In": "放大",
+    "Zoom Out": "缩小",
+    "Toggle Full Screen": "切换全屏",
+    "Split Terminal": "拆分终端",
+    "Split Conversation Horizontally": "水平拆分对话",
+    "Split Conversation Vertically": "垂直拆分对话",
+    "Find in conversation": "在会话中查找",
+    "Version": "版本"
+  },
+  "tray": {
+    "No agents running": "没有正在运行的智能体",
+    "Open Antigravity": "打开 Antigravity",
+    "Quit": "退出"
+  },
+  "status": {
+    "agentsRunning": "${0} 个智能体正在运行",
+    "loading": "正在加载 Antigravity…",
+    "version": "版本"
+  },
+  "updater": {
+    "title": "检查更新",
+    "message": "暂无可用更新",
+    "confirm": "确定"
+  }
+}
