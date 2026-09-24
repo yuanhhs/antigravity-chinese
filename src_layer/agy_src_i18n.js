@@ -422,6 +422,14 @@ function translateQuotaText(value) {
     return `你已使用${amount}${period}限额，将在${duration}后完全恢复。`;
 }
 
+/** 套餐说明由服务端的 userTier.upgradeSubscriptionText 提供，需在显示时翻译。 */
+function translatePlanText(value) {
+    if (value === 'You can upgrade to a Google AI Ultra plan to receive higher rate limits.') {
+        return '升级至 Google AI Ultra 套餐，可获得更高的使用限额。';
+    }
+    return value;
+}
+
 function isStringLiteral(n) {
     return n && n.type === 'Literal' && typeof n.value === 'string';
 }
@@ -1022,9 +1030,10 @@ function translateSource(src, dict, opts = {}) {
     // 配额摘要的 refreshText 来自接口字段（a.description），不是源码字面量。
     // 仅在同时具有 remainingFraction/subtext/disabled 的配额视图模型中包装该动态值，
     // 让已知配额句式在运行时进入受限翻译函数；其他 refreshText/description 均不处理。
-    const runtimeTextFn = translateQuotaText.toString();
+    const quotaTextFn = translateQuotaText.toString();
+    const planTextFn = translatePlanText.toString();
     const runtimeWrappedNodes = new Set();
-    const wrapRuntimeText = (node) => {
+    const wrapRuntimeText = (node, runtimeTextFn) => {
         if (runtimeWrappedNodes.has(node)) return;
         reps.push({ start: node.start, end: node.end, node, runtimeTextFn });
         runtimeWrappedNodes.add(node);
@@ -1040,18 +1049,25 @@ function translateSource(src, dict, opts = {}) {
     };
     for (const [node, parent] of parentOf) {
         if (!parent || inZone(node.start) >= 0) continue;
+        // 两处套餐设置都直接读取服务端字段；仅包装该字段，不触碰其他服务端说明。
+        const member = node.type === 'ChainExpression' ? node.expression : node;
+        if (member.type === 'MemberExpression' && !member.computed
+            && member.property.type === 'Identifier' && member.property.name === 'upgradeSubscriptionText') {
+            if (node.type === 'ChainExpression' || parent.type !== 'ChainExpression') wrapRuntimeText(node, planTextFn);
+            continue;
+        }
         if (parent.type === 'Property' && parent.value === node && getKeyName(parent) === 'refreshText'
             && !isStringLiteral(node) && node.type !== 'TemplateLiteral') {
             const obj = parentOf.get(parent);
             if (!obj || obj.type !== 'ObjectExpression') continue;
             const siblingKeys = new Set(obj.properties.map(getKeyName).filter(Boolean));
-            if (siblingKeys.has('remainingFraction') && siblingKeys.has('subtext') && siblingKeys.has('disabled')) wrapRuntimeText(node);
+            if (siblingKeys.has('remainingFraction') && siblingKeys.has('subtext') && siblingKeys.has('disabled')) wrapRuntimeText(node, quotaTextFn);
             continue;
         }
         if (node.type !== 'MemberExpression' || node.computed || node.property.type !== 'Identifier' || node.property.name !== 'displayName') continue;
         const isLabelValue = parent.type === 'Property' && parent.value === node && getKeyName(parent) === 'label';
         const isElementChild = parent.type === 'CallExpression' && isCreateElementCall(parent) && parent.arguments.indexOf(node) >= 2;
-        if ((isLabelValue || isElementChild) && isInsideQuotaView(node)) wrapRuntimeText(node);
+        if ((isLabelValue || isElementChild) && isInsideQuotaView(node)) wrapRuntimeText(node, quotaTextFn);
     }
 
     // 复数后缀联动：children 序列中形如  n," item",n===1?"":"s"  的 "s"/"es" 分支，
@@ -1125,4 +1141,4 @@ function translateSource(src, dict, opts = {}) {
     return { code, replaced, matchedKeys, missing, rejected, details, zones: zones.length };
 }
 
-module.exports = { extract, translateSource, translateQuotaText, normalizeDict, validateTranslation, findProtectedZones, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };
+module.exports = { extract, translateSource, translateQuotaText, translatePlanText, normalizeDict, validateTranslation, findProtectedZones, looksLikeText, isSentenceLike, isStrongKey, templateKey, STRONG_KEYS, WEAK_KEYS };

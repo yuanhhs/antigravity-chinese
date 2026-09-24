@@ -2,7 +2,7 @@
 
 const assert = require('assert');
 const vm = require('vm');
-const { translateQuotaText, translateSource } = require('../src_layer/agy_src_i18n.js');
+const { translateQuotaText, translatePlanText, translateSource } = require('../src_layer/agy_src_i18n.js');
 
 assert.strictEqual(
     translateQuotaText('You have used some of your weekly limit, it will fully refresh in 3 days, 14 hours.'),
@@ -21,6 +21,20 @@ assert.strictEqual(translateQuotaText('Gemini Models'), 'Gemini 模型');
 assert.strictEqual(translateQuotaText('Weekly Limit Remaining'), '每周剩余限额');
 assert.strictEqual(translateQuotaText('Five Hour Limit Remaining'), '五小时剩余限额');
 assert.strictEqual(translateQuotaText('Claude and GPT models'), 'Claude 和 GPT 模型');
+
+const upgradeText = 'You can upgrade to a Google AI Ultra plan to receive higher rate limits.';
+const translatedUpgradeText = '升级至 Google AI Ultra 套餐，可获得更高的使用限额。';
+assert.strictEqual(translatePlanText(upgradeText), translatedUpgradeText);
+assert.strictEqual(translatePlanText('Other subscription details'), 'Other subscription details');
+const planSource = `
+const account = { userTier: { upgradeSubscriptionText: ${JSON.stringify(upgradeText)} } };
+globalThis.planDescription = account?.userTier?.upgradeSubscriptionText || '';
+globalThis.unrelatedDescription = account?.description || 'Other subscription details';
+`;
+const planContext = {};
+vm.runInNewContext(translateSource(planSource, {}).code, planContext);
+assert.strictEqual(planContext.planDescription, translatedUpgradeText);
+assert.strictEqual(planContext.unrelatedDescription, 'Other subscription details');
 
 const source = `
 const quota = {

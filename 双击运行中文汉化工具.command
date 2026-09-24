@@ -7,7 +7,8 @@ echo "[1] 安装 Antigravity 桌面版汉化"
 echo "[2] 卸载 Antigravity 桌面版汉化"
 echo "[3] 安装 VS Code 插件汉化"
 echo "[4] 卸载 VS Code 插件汉化"
-printf "请输入 1/2/3/4，直接回车默认 1："
+echo "[5] 同时安装 Antigravity 和 VS Code 汉化"
+printf "请输入 1/2/3/4/5，直接回车默认 1："
 read -r ACTION
 ACTION="${ACTION:-1}"
 
@@ -39,6 +40,10 @@ case "$ACTION" in
     4)
         echo "正在卸载 VS Code 插件汉化..."
         node tools/localize_vscode_extension.js --uninstall "$@"
+        ;;
+    5)
+        echo "正在同时安装 Antigravity 和 VS Code 汉化..."
+        node tools/localize_both.js "$@"
         ;;
     *)
         echo "无效选项：$ACTION"

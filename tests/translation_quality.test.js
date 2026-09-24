@@ -86,6 +86,21 @@ test('设置标题和禁用提示可翻译，内部状态标识保持原文', ()
     assert.ok(out.includes('title:"已禁用"'));
 });
 
+test('推送按钮的禁用原因和进度文案均有中文', () => {
+    const dict = loadDictionary(path.join(__dirname, '..', 'dicts_src'));
+    const src = 'globalThis.messages=['
+        + '"No commits to push","No remote configured","Not on a branch","Pushing..."];';
+    const result = translateSource(src, dict);
+    const context = {};
+    vm.runInNewContext(result.code, context);
+    assert.deepEqual(Array.from(context.messages), [
+        '没有可推送的提交', '未配置远程仓库', '当前不在任何分支上', '正在推送…',
+    ]);
+    for (const key of ['No commits to push', 'No remote configured', 'Not on a branch', 'Pushing...']) {
+        assert.ok(result.matchedKeys.has(key), `${key} 未命中`);
+    }
+});
+
 test('菜单词库缺失及动态计数丢失在安装前被拒绝', () => {
     const native = require('../locales/zh-CN.json');
     assert.doesNotThrow(() => validateNativeMessages(native));

@@ -9,13 +9,15 @@ echo [1] 安装 Antigravity 桌面版汉化
 echo [2] 卸载 Antigravity 桌面版汉化
 echo [3] 安装 VS Code 插件汉化
 echo [4] 卸载 VS Code 插件汉化
+echo [5] 同时安装 Antigravity 和 VS Code 汉化
 set "ACTION=1"
-set /p "ACTION=请选择 [1/2/3/4] (直接按 Enter 默认为 1): "
+set /p "ACTION=请选择 [1/2/3/4/5] (直接按 Enter 默认为 1): "
 for /f "tokens=1" %%A in ("%ACTION%") do set "ACTION=%%A"
 if "%ACTION%"=="1" goto :install_app
 if "%ACTION%"=="2" goto :restore_app
 if "%ACTION%"=="3" goto :install_vscode
 if "%ACTION%"=="4" goto :restore_vscode
+if "%ACTION%"=="5" goto :install_both
 echo.
 echo [×] 无效选项：%ACTION%
 goto :fail
@@ -54,6 +56,15 @@ node "%~dp0tools\localize_vscode_extension.js" --uninstall %*
 if %errorlevel% neq 0 goto :fail
 echo.
 echo VS Code 插件汉化已卸载。请在 VS Code 中执行 Developer: Reload Window。
+goto :done
+
+:install_both
+echo.
+echo 正在同时安装 Antigravity 和 VS Code 汉化...
+node "%~dp0tools\localize_both.js" %*
+if %errorlevel% neq 0 goto :fail
+echo.
+echo 两项汉化均已安装。请重新打开 Antigravity，并在 VS Code 中执行 Developer: Reload Window。
 goto :done
 
 :fail

@@ -9,7 +9,7 @@
 1. 下载 `2.17.0.zip` 并解压。
 2. 完全退出 Antigravity。
 3. Windows 运行 `双击运行中文汉化工具.bat`；macOS 运行 `双击运行中文汉化工具.command`。
-4. 选择 `1` 安装，完成后重新打开软件。
+4. 选择 `1` 安装桌面版汉化，或选择 `5` 同时安装桌面版和 VS Code 插件汉化。完成后重新打开软件。
 
 安装时自动备份原始程序包。首次安装需联网获取打包工具；macOS 脚本会请求管理员密码。
 
@@ -31,14 +31,15 @@ node localization_engine.js --huifu                 # 卸载
 
 ## VS Code 插件汉化
 
-支持 VS Code 中的 `google.google-antigravity` 扩展。安装扩展后，运行双击脚本，选择 **3** 安装插件汉化；选择 **4** 卸载。也可以在本仓库目录运行：
+支持 VS Code 中的 `google.google-antigravity` 扩展。安装扩展后，运行双击脚本，选择 **3** 安装插件汉化；选择 **4** 卸载；选择 **5** 同时安装桌面版和插件汉化。也可以在本仓库目录运行：
 
 ```bash
 node tools/localize_vscode_extension.js               # 汉化最新安装的插件
 node tools/localize_vscode_extension.js --uninstall   # 还原官方插件
+node tools/localize_both.js                            # 同时安装桌面版和插件汉化
 ```
 
-也可用 `--extension-dir "插件目录"` 指定版本或自定义扩展目录。安装工具会备份原始 `extension.js` 和 `package.json`，翻译命令、设置说明，以及插件侧栏从本机 `agy --hub` 加载的界面。执行 VS Code 命令“Developer: Reload Window”后生效。插件更新后，在新版扩展目录重新运行安装命令；修改 `dicts_src/` 后也需重新运行。
+也可用 `--extension-dir "插件目录"` 指定版本或自定义扩展目录；同时安装时可另加 `--install-dir "桌面版安装路径"`。安装工具会备份原始 `extension.js` 和 `package.json`，翻译命令、设置说明，以及插件侧栏从本机 `agy --hub` 加载的界面。执行 VS Code 命令“Developer: Reload Window”后生效。插件更新后，在新版扩展目录重新运行安装命令；修改 `dicts_src/` 后也需重新运行。
 
 该方案使用仅监听本机回环地址的代理翻译 `/main.js`，其他请求仍转发给插件自己的 AGY 服务。远程 VS Code 会话中的非本机服务地址目前保持原样。
 
