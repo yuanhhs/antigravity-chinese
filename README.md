@@ -29,6 +29,19 @@ node localization_engine.js --install-dir "安装路径" # 指定路径
 node localization_engine.js --huifu                 # 卸载
 ```
 
+## VS Code 插件汉化
+
+支持 VS Code 中的 `google.google-antigravity` 扩展。安装扩展后，运行双击脚本，选择 **3** 安装插件汉化；选择 **4** 卸载。也可以在本仓库目录运行：
+
+```bash
+node tools/localize_vscode_extension.js               # 汉化最新安装的插件
+node tools/localize_vscode_extension.js --uninstall   # 还原官方插件
+```
+
+也可用 `--extension-dir "插件目录"` 指定版本或自定义扩展目录。安装工具会备份原始 `extension.js` 和 `package.json`，翻译命令、设置说明，以及插件侧栏从本机 `agy --hub` 加载的界面。执行 VS Code 命令“Developer: Reload Window”后生效。插件更新后，在新版扩展目录重新运行安装命令；修改 `dicts_src/` 后也需重新运行。
+
+该方案使用仅监听本机回环地址的代理翻译 `/main.js`，其他请求仍转发给插件自己的 AGY 服务。远程 VS Code 会话中的非本机服务地址目前保持原样。
+
 ## 补充翻译
 
 词库位于 `dicts_src/`。保持 Antigravity 运行，执行：

@@ -1,31 +1,50 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
-# 检查管理员权限，若不是 root 则自动通过 sudo 提权
-if [ "$EUID" -ne 0 ]; then
-    echo "======================================================"
-    echo " 提示：macOS 系统修改应用程序（/Applications）需要管理员权限"
-    echo " 请在下方输入您的电脑开机密码（输入时密码不显示，直接回车）："
-    echo "======================================================"
-    exec sudo bash "$0" "$@"
-fi
-
 echo "====== Antigravity 中文汉化工具 (macOS) ======"
 echo "请选择要执行的操作："
-echo "[1] 安装中文汉化（推荐）"
-echo "[2] 卸载汉化，还原官方英文"
-printf "请输入 1/2，直接回车默认 1："
+echo "[1] 安装 Antigravity 桌面版汉化"
+echo "[2] 卸载 Antigravity 桌面版汉化"
+echo "[3] 安装 VS Code 插件汉化"
+echo "[4] 卸载 VS Code 插件汉化"
+printf "请输入 1/2/3/4，直接回车默认 1："
 read -r ACTION
+ACTION="${ACTION:-1}"
 
-if [ "$ACTION" = "2" ]; then
-    echo ""
-    echo "====== 正在还原 macOS 版 Antigravity 官方英文 ======"
-    node localization_engine.js --huifu --install-dir /Applications/Antigravity.app "$@"
-else
-    echo ""
-    echo "====== 正在安装 macOS 版 Antigravity 中文汉化 ======"
-    node localization_engine.js --install-dir /Applications/Antigravity.app "$@"
-fi
+case "$ACTION" in
+    1|2)
+        NODE_BIN="$(command -v node)"
+        if [ -z "$NODE_BIN" ]; then
+            echo "未找到 Node.js，请先安装 Node.js。"
+            exit 1
+        fi
+        if [ "$ACTION" = "2" ]; then
+            echo "正在还原 Antigravity 桌面版..."
+            APP_ARGS=(--huifu --install-dir /Applications/Antigravity.app)
+        else
+            echo "正在安装 Antigravity 桌面版汉化..."
+            APP_ARGS=(--install-dir /Applications/Antigravity.app)
+        fi
+        if [ "$EUID" -ne 0 ]; then
+            echo "修改 /Applications 中的程序需要管理员密码。"
+            sudo "$NODE_BIN" localization_engine.js "${APP_ARGS[@]}" "$@"
+        else
+            "$NODE_BIN" localization_engine.js "${APP_ARGS[@]}" "$@"
+        fi
+        ;;
+    3)
+        echo "正在安装 VS Code 插件汉化..."
+        node tools/localize_vscode_extension.js "$@"
+        ;;
+    4)
+        echo "正在卸载 VS Code 插件汉化..."
+        node tools/localize_vscode_extension.js --uninstall "$@"
+        ;;
+    *)
+        echo "无效选项：$ACTION"
+        exit 1
+        ;;
+esac
 
 if [ $? -ne 0 ]; then
     echo ""

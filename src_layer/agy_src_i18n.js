@@ -510,12 +510,15 @@ function analyze(ast, opts = {}) {
             const k = getKeyName(pr);
             if (!k) continue;
             let kind = null;
+            // 标签页标题由回调生成；返回的单词也必须按展示文案处理。
+            const tabTitleGetter = k === 'getTabTitle' && pr.value.type === 'ArrowFunctionExpression' && pr.value.expression;
             if (ENTITY_KEYS.has(k)) kind = 'entity';
             else if (SAFE_KEYS.has(k)) kind = 'safeprop';
+            else if (tabTitleGetter) kind = 'safeprop';
             else if (isStrongKey(k)) kind = 'prop';
             else if (WEAK_KEYS.has(k)) kind = 'weakprop';
             if (!kind) continue;
-            const leaves = []; collectLeaves(pr.value, leaves);
+            const leaves = []; collectLeaves(tabTitleGetter ? pr.value.body : pr.value, leaves);
             if (!leaves.length) continue;
             if (!sib) sib = new Set(obj.properties.map(getKeyName).filter(Boolean));
             for (const l of leaves) { mark(l, kind); if (!propInfo.has(l)) propInfo.set(l, { propKey: k, siblings: sib }); }

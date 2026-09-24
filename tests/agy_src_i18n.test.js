@@ -100,4 +100,23 @@ const translatedPermissionValue = translateSource(selectedPermissionValue, {
 }).code;
 assert.ok(translatedPermissionValue.includes('turbo?"始终继续":"总是询问"'));
 
+const tabTitles = `
+const ids = { Overview: 1, Review: 2, Terminal: 3 };
+const tabs = {
+    overview: { getTabTitle: () => "Overview" },
+    review: { getTabTitle: () => "Review" },
+    terminal: { getTabTitle: tab => tab.title || "Terminal" }
+};
+globalThis.titles = [tabs.overview.getTabTitle(), tabs.review.getTabTitle(), tabs.terminal.getTabTitle({})];
+globalThis.id = ids.Overview;
+`;
+const translatedTabs = translateSource(tabTitles, {
+    Overview: '概览', Review: '审查', Terminal: '终端'
+}).code;
+const tabContext = {};
+vm.runInNewContext(translatedTabs, tabContext);
+assert.deepStrictEqual(Array.from(tabContext.titles), ['概览', '审查', '终端']);
+assert.strictEqual(tabContext.id, 1);
+assert.ok(translatedTabs.includes('Overview: 1'));
+
 console.log('agy_src_i18n tests passed');
