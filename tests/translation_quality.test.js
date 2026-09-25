@@ -101,6 +101,19 @@ test('推送按钮的禁用原因和进度文案均有中文', () => {
     }
 });
 
+test('计划审阅策略中的 plan 命令名保持原文', () => {
+    const dict = loadDictionary(path.join(__dirname, '..', 'dicts_src'));
+    const policySource = 'globalThis.policy={'
+        + 'title:"Plan Review Policy",'
+        + 'command:jsx("code",null,"plan"),'
+        + 'help:[jsx("span",null,"and select"),jsx("span",null,"to have the agent generate a plan.")]};';
+    const policyContext = { jsx: (_type, _props, child) => child };
+    vm.runInNewContext(translateSource(policySource, dict).code, policyContext);
+    assert.equal(policyContext.policy.title, '计划审阅策略');
+    assert.equal(policyContext.policy.command, 'plan');
+    assert.deepEqual(Array.from(policyContext.policy.help), ['并选择', '，让智能体生成计划。']);
+});
+
 test('菜单词库缺失及动态计数丢失在安装前被拒绝', () => {
     const native = require('../locales/zh-CN.json');
     assert.doesNotThrow(() => validateNativeMessages(native));

@@ -36,7 +36,6 @@
   "Open the ${0} plugin": "打开 ${0} 插件",
   "Optional branch or ref used when creating a new Cog workspace (defaults to main if unset).": "创建新 Cog 工作区时使用的分支或引用，可选；未设置时默认为 main。",
   "pasted-${0}.${1}": null,
-  "plan": "计划",
   "Plan Review Policy": "计划审阅策略",
   "Plugin metadata": "插件元数据",
   "Process Error": "进程错误",
