@@ -9,7 +9,7 @@ AGENTS.md
 .codex/
 codex/
 .codegraph/
-
+.claude
 # Temporary files
 temp/
 temps/
