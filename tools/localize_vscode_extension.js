@@ -87,7 +87,7 @@ function install(dir) {
     const layer = path.join(dir, 'agy_zh_vscode');
     fs.mkdirSync(layer, { recursive: true });
     for (const [from, to] of [
-        ['vscode_layer/proxy.js', 'proxy.js'],
+        ['src_layer/vscode_proxy.js', 'proxy.js'],
         ['src_layer/agy_src_i18n.js', 'agy_src_i18n.js'],
         ['src_layer/acorn.js', 'acorn.js'],
         ['src_layer/acorn.LICENSE', 'acorn.LICENSE'],
