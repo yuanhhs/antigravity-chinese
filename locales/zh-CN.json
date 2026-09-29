@@ -6,6 +6,8 @@
     "Window": "窗口",
     "Help": "帮助",
     "New Window": "新建窗口",
+    "Connect to WSL": "连接到 WSL",
+    "Reopen Locally": "在本地重新打开",
     "Create Project": "创建项目",
     "Command Palette": "命令面板",
     "Docs": "文档",

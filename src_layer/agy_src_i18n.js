@@ -42,7 +42,7 @@ const acorn = require('./acorn.js');
 
 // 强展示键：值几乎总是给用户看的文本（允许单个词）
 const STRONG_KEYS = new Set([
-    'label', 'title', 'description', 'placeholder', 'tooltip', 'tooltipText', 'tooltipContent',
+    'label', 'title', 'description', 'desc', 'placeholder', 'tooltip', 'tooltipText', 'tooltipContent',
     'aria-label', 'ariaLabel', 'scopeAriaLabel', 'actionsAriaLabel', 'accessibilityLabel',
     'hint', 'emptyMessage', 'emptyHint', 'emptyText', 'emptyLabel', 'emptyTitle', 'emptyDescription',
     'submitLabel', 'cancelLabel', 'confirmLabel', 'actionLabel', 'buttonLabel', 'linkLabel',
@@ -929,7 +929,27 @@ function validateTranslation(key, zh, entry = {}) {
         if (source.has(token) && !target.has(token) && omitted.includes(index)) continue;
         errors.push(`参数 ${token} 次数不一致`);
     }
+    if (entry.templateValues !== undefined) {
+        if (!entry.templateValues || typeof entry.templateValues !== 'object' || Array.isArray(entry.templateValues)) {
+            errors.push('templateValues 必须是参数编号到译文映射的对象');
+        } else for (const [index, values] of Object.entries(entry.templateValues)) {
+            if (!/^(0|[1-9]\d*)$/.test(index) || !target.has('${' + index + '}')
+                || !values || typeof values !== 'object' || Array.isArray(values)
+                || !Object.keys(values).length || Object.values(values).some(value => typeof value !== 'string')) {
+                errors.push(`无效的 templateValues 参数 ${index}`);
+            }
+        }
+    }
     return errors;
+}
+
+// 只接受声明过的静态分支值；保留条件表达式本身，未知动态值让整条译文回退。
+function templateValueLiterals(node, values) {
+    if (isStringLiteral(node) && Object.prototype.hasOwnProperty.call(values, node.value)) return [node];
+    if (node?.type !== 'ConditionalExpression') return null;
+    const consequent = templateValueLiterals(node.consequent, values);
+    const alternate = templateValueLiterals(node.alternate, values);
+    return consequent && alternate ? [...consequent, ...alternate] : null;
 }
 
 function isPluralSuffix(node) {
@@ -952,7 +972,7 @@ function normalizeDict(dict) {
             const scope = v.scope === 'all' || v.scope === 'display' ? v.scope : null;
             const keys = Array.isArray(v.keys) && v.keys.length ? new Set(v.keys) : null;
             const notWith = Array.isArray(v.notWith) && v.notWith.length ? new Set(v.notWith) : null;
-            out.set(k, { zh, scope, keys, notWith, omitPlaceholders: v.omitPlaceholders, note: v.note });
+            out.set(k, { zh, scope, keys, notWith, omitPlaceholders: v.omitPlaceholders, templateValues: v.templateValues, note: v.note });
         }
     }
     return out;
@@ -998,8 +1018,17 @@ function translateSource(src, dict, opts = {}) {
             rejected.set(key, ['省略的参数不是可安全移除的英文复数后缀']);
             return;
         }
+        const valueReps = [];
+        for (const [index, values] of Object.entries(entry.templateValues || {})) {
+            const literals = node.type === 'TemplateLiteral' && templateValueLiterals(node.expressions[Number(index)], values);
+            if (!literals) {
+                rejected.set(key, [`参数 ${index} 不符合 templateValues 声明的静态分支`]);
+                return;
+            }
+            for (const literal of literals) valueReps.push({ start: literal.start, end: literal.end, node: literal, zh: values[literal.value] });
+        }
         matchedKeys.add(key);
-        reps.push({ start: node.start, end: node.end, node, zh, key });
+        reps.push({ start: node.start, end: node.end, node, zh, key, valueReps });
         repNodes.add(node);
     };
     for (const [node, { key }] of marked) {
@@ -1010,6 +1039,30 @@ function translateSource(src, dict, opts = {}) {
             continue;
         }
         pushRep(node, key, zh);
+    }
+    // 项目删除摘要先用 push 收集单复数文案，再用 join 拼接。普通调用实参
+    // 会被排除为非展示上下文；只在同一函数内找到完整的五段摘要时翻译。
+    const conversationSummaryKeys = new Set([
+        '1 active conversation', '${0} active conversations',
+        '1 archived conversation', '${0} archived conversations', ' and ',
+    ]);
+    const summaryGroups = new Map();
+    for (const node of parentOf.keys()) {
+        const key = node.type === 'TemplateLiteral' ? templateKey(node) : isStringLiteral(node) ? node.value : null;
+        if (!conversationSummaryKeys.has(key)) continue;
+        let fn = parentOf.get(node);
+        while (fn && !['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(fn.type)) fn = parentOf.get(fn);
+        if (!fn) continue;
+        if (!summaryGroups.has(fn)) summaryGroups.set(fn, new Map());
+        summaryGroups.get(fn).set(key, node);
+    }
+    for (const group of summaryGroups.values()) {
+        if (![...conversationSummaryKeys].every(key => group.has(key))) continue;
+        for (const [key, node] of group) {
+            if (inZone(node.start) >= 0) continue;
+            const zh = lookup.get(key)?.zh;
+            if (typeof zh === 'string' && zh !== key) pushRep(node, key, zh);
+        }
     }
     // scope:"all"：整包内所有等于原文的字符串字面量一致改名（含比较、case、Map 键、调用实参），
     // 以及 "A B C".split(" ") 列表字面量里的对应元素
@@ -1123,7 +1176,11 @@ function translateSource(src, dict, opts = {}) {
                 const idx = Number(m[1]);
                 if (idx < exprs.length) {
                     const ex = exprs[idx];
-                    const sub = inner.filter(x => x.start >= ex.start && x.end <= ex.end);
+                    const values = (r.valueReps || []).filter(x => x.start >= ex.start && x.end <= ex.end);
+                    const sub = inner.filter(x => x.start >= ex.start && x.end <= ex.end
+                        && !values.some(value => x.start === value.start && x.end === value.end));
+                    sub.push(...values);
+                    sub.sort((a, b) => a.start - b.start || b.end - a.end);
                     out += '${' + render(ex.start, ex.end, sub) + '}';
                 } else {
                     out += escapeTemplateChunk(part);

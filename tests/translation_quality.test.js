@@ -101,6 +101,26 @@ test('推送按钮的禁用原因和进度文案均有中文', () => {
     }
 });
 
+test('项目删除摘要的单复数、归档数量和连接词均有中文', () => {
+    const dict = loadDictionary(path.join(__dirname, '..', 'dicts_src'));
+    const src = 'function summary(activeCount, archivedCount) {'
+        + 'const parts=[];'
+        + 'if(activeCount>0) parts.push(activeCount===1?"1 active conversation":`${activeCount} active conversations`);'
+        + 'if(archivedCount>0) parts.push(archivedCount===1?"1 archived conversation":`${archivedCount} archived conversations`);'
+        + 'return parts.join(" and ");}'
+        + 'globalThis.summary=summary;';
+    const result = translateSource(src, dict);
+    for (const key of ['1 active conversation', '${0} active conversations',
+        '1 archived conversation', '${0} archived conversations', ' and ']) {
+        assert.ok(result.matchedKeys.has(key), `${key} 未命中`);
+    }
+    const context = {};
+    vm.runInNewContext(result.code, context);
+    assert.equal(context.summary(4, 0), '4 个活跃对话');
+    assert.equal(context.summary(1, 1), '1 个活跃对话和1 个已归档对话');
+    assert.equal(context.summary(0, 3), '3 个已归档对话');
+});
+
 test('计划审阅策略中的 plan 命令名保持原文', () => {
     const dict = loadDictionary(path.join(__dirname, '..', 'dicts_src'));
     const policySource = 'globalThis.policy={'

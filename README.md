@@ -2,8 +2,6 @@
 
 为 **Antigravity** 提供简体中文界面，覆盖主界面、设置、系统菜单与托盘菜单，并支持 VS Code 中的 Antigravity 扩展（`google.google-antigravity`）。适用于 Windows 和 macOS。
 
-**[前往 Releases 页面下载汉化包](https://github.com/yuanhhs/antigravity-chinese/releases)**
-
 ## 项目介绍
 
 本项目提供 Antigravity 桌面端和 VS Code 扩展的简体中文汉化工具，支持安装、卸载及词条维护。汉化范围、下载方式与翻译维护入口见[详细项目介绍](docs/README.md)。

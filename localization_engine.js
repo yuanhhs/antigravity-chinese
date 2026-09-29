@@ -336,6 +336,61 @@ function ensureWritePermission(targetDir) {
 // ==========================================
 // Antigravity 2.0 汉化引擎 (ASAR打包注入模式)
 // ==========================================
+function readAsarMetadata(asarPath) {
+    const fd = fs.openSync(asarPath, 'r');
+    try {
+        const stat = fs.fstatSync(fd);
+        const head = Buffer.alloc(16);
+        if (fs.readSync(fd, head, 0, head.length, 0) !== head.length) throw new Error('ASAR 头部不完整');
+        const headerSize = head.readUInt32LE(12);
+        const dataOffset = 8 + head.readUInt32LE(4);
+        if (headerSize > 64 * 1024 * 1024 || headerSize > stat.size - 16 || dataOffset < 16 + headerSize) throw new Error('ASAR 头部大小无效');
+        const buffer = Buffer.alloc(headerSize);
+        if (fs.readSync(fd, buffer, 0, headerSize, 16) !== headerSize) throw new Error('ASAR 头部不完整');
+        const header = JSON.parse(buffer.toString('utf8').replace(/\0+$/, ''));
+        const readEntry = entry => {
+            if (!entry || entry.unpacked || entry.link) throw new Error('缺少 ASAR 内嵌文件');
+            const offset = dataOffset + Number(entry.offset);
+            if (!Number.isSafeInteger(offset) || offset < dataOffset || !Number.isSafeInteger(entry.size)
+                || entry.size < 0 || entry.size > 64 * 1024 * 1024 || offset + entry.size > stat.size) throw new Error('ASAR 文件范围无效');
+            const content = Buffer.alloc(entry.size);
+            if (fs.readSync(fd, content, 0, entry.size, offset) !== entry.size) throw new Error('ASAR 文件不完整');
+            return content.toString('utf8');
+        };
+        const version = JSON.parse(readEntry(header.files?.['package.json'])).version;
+        if (typeof version !== 'string' || !version) throw new Error('ASAR 缺少版本号');
+        const dist = header.files?.dist?.files || {};
+        const patched = !!dist.agy_zh
+            || (dist['main.js'] && readEntry(dist['main.js']).includes(SRC_SIGNATURE_START))
+            || (dist['preload.js'] && readEntry(dist['preload.js']).includes(LEGACY_DOM_SIGNATURE_START));
+        return { version, patched: !!patched };
+    } finally {
+        fs.closeSync(fd);
+    }
+}
+
+function prepareOfficialBackup(asarPath) {
+    const bakPath = asarPath + '.bak';
+    const current = readAsarMetadata(asarPath);
+    const backup = fs.existsSync(bakPath) ? readAsarMetadata(bakPath) : null;
+    if (current.patched) {
+        if (!backup || backup.patched || backup.version !== current.version) {
+            throw new Error(`当前 ${current.version} 已汉化，但缺少同版本官方备份；请重新安装官方版本后再汉化。`);
+        }
+    } else {
+        // 官方升级也可能不改变版本号，因此以当前未汉化的包作为新的官方基线。
+        if (backup && !fs.readFileSync(asarPath).equals(fs.readFileSync(bakPath))) {
+            const version = backup.version.replace(/[^\w.-]/g, '_');
+            const archive = `${bakPath}.${version}.${Date.now()}`;
+            fs.copyFileSync(bakPath, archive, fs.constants.COPYFILE_EXCL);
+            console.log(`[备份] 已保留旧备份: ${path.basename(archive)}`);
+        }
+        fs.copyFileSync(asarPath, bakPath);
+        console.log(`[备份] 官方 ${current.version} 原始包已备份。`);
+    }
+    return bakPath;
+}
+
 function install20(resourcesDir) {
     const asarPath = path.join(resourcesDir, "app.asar");
     const bakPath = path.join(resourcesDir, "app.asar.bak");
@@ -345,31 +400,19 @@ function install20(resourcesDir) {
         return false;
     }
 
-    // 1. 备份
-    if (!fs.existsSync(bakPath)) {
-        console.log(`[备份] 正在创建官方原始包备份: app.asar.bak ...`);
-        try {
-            fs.copyFileSync(asarPath, bakPath);
-            console.log(`[备份] 备份成功！`);
-        } catch (e) {
-            console.error(`[错误] 创建备份失败: ${e.message}`);
-            if (process.platform === 'darwin' && e.code === 'EPERM') {
-                console.error(`[提示] macOS 写入受限，请使用管理员权限运行脚本。`);
-            }
-            return false;
-        }
-    } else {
-        // 尝试用官方备份覆盖当前 app.asar，以确保每次汉化都基于最干净的官方英文包
-        try {
-            fs.copyFileSync(bakPath, asarPath);
-            console.log(`[还原] 已重置当前 app.asar 为官方原始备份包，以进行全新注入...`);
-        } catch (e) {
-            console.log(`[提示] 当前 app.asar 被锁定（可能是客户端正在运行），将使用当前包进行增量注入。`);
-        }
+    // 1. 核对当前版本的官方备份，避免升级后被旧备份降级。
+    try {
+        prepareOfficialBackup(asarPath);
+        // 从 app.asar 解包才能找到与它配套的 app.asar.unpacked。
+        if (readAsarMetadata(asarPath).patched) fs.copyFileSync(bakPath, asarPath);
+    } catch (e) {
+        console.error(`[错误] 准备官方备份失败: ${e.message}`);
+        return false;
     }
 
     // 2. 临时提取目录
     const tempDir = path.join(__dirname, "_temp_asar");
+    if (path.dirname(path.resolve(tempDir)) !== path.resolve(__dirname)) throw new Error('无效的解包目录');
     if (fs.existsSync(tempDir)) {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -658,7 +701,7 @@ function main() {
     }
 
     // 5. 校验通过且原来客户端在运行，则自动重新启动客户端
-    if (success && wasAppRunning) {
+    if (success && wasAppRunning && !noKill) {
         console.log("\n[启动] 检测到安装前反重力客户端处于开启状态，正在重新启动客户端...");
         try {
             if (process.platform === 'win32') {
@@ -687,4 +730,5 @@ function main() {
     }
 }
 
-main();
+if (require.main === module) main();
+module.exports = { readAsarMetadata, prepareOfficialBackup };
