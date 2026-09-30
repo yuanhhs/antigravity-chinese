@@ -345,8 +345,19 @@ int main(int argc, char* argv[]) {
                 break;
         }
 
-        printf("\n执行完成，按任意键退出...\n");
-        _getch();
+        if (exit_code == 0) {
+            printf("\n执行完成，将在 5 秒后自动关闭（也可按任意键立即关闭）...\n");
+            for (int i = 0; i < 50; i++) {
+                if (_kbhit()) {
+                    _getch();
+                    break;
+                }
+                Sleep(100);
+            }
+        } else {
+            printf("\n[提示] 执行中出现异常，按任意键退出...\n");
+            _getch();
+        }
     }
 
     return exit_code;
