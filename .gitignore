@@ -14,3 +14,6 @@ codex/
 temp/
 temps/
 reference/codex-i18n-*/
+
+# Expanded macOS applications are distributed as ZIP files.
+/release/*.app/

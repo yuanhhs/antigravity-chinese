@@ -12,7 +12,6 @@ const BUNDLE_DIR = path.join(TEMP_DIR, 'bundle_stage');
 const PAYLOAD_ZIP = path.join(TEMP_DIR, 'payload.zip');
 const LAUNCHER_C = path.join(ROOT_DIR, 'tools', 'launcher.c');
 const LAUNCHER_EXE = path.join(TEMP_DIR, 'launcher_base.exe');
-const OUTPUT_EXE = path.join(RELEASE_DIR, 'antigravity-cn.exe');
 const MAGIC = 'AGYZHZIP';
 
 function ensureCleanDir(dir) {
@@ -40,7 +39,9 @@ function copyDirSafe(src, dest) {
     }
 }
 
-function build() {
+function build(version = '2.19.1') {
+    if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('版本号格式应为 major.minor.patch');
+    const OUTPUT_EXE = path.join(RELEASE_DIR, `v${version}.exe`);
     console.log('====== 开始构建 Antigravity 极致压缩单文件 EXE ======');
 
     if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -124,7 +125,7 @@ function build() {
 
 if (require.main === module) {
     try {
-        build();
+        build(process.argv[2]);
     } catch (err) {
         console.error(`[构建失败] ${err.message}`);
         process.exit(1);

@@ -31,6 +31,8 @@
 
 首次安装会备份原始文件：桌面版为 `app.asar.bak`，插件为 `extension.js` 与 `package.json`。卸载即从备份还原。
 
+Windows 单文件版命名为 `v<版本号>.exe`。macOS App 版下载 `v<版本号>.app.zip`，解压后双击 `v<版本号>.app`，即可打开相同的操作菜单。支持 Apple Silicon 和 Intel Mac，仍需安装 Node.js LTS。详情见 [macOS App 使用说明](docs/macos-app.md)。
+
 ## 更新
 
 Antigravity 或插件升级后，官方文件会覆盖汉化。下载适配新版本的汉化包，重新安装即可。
