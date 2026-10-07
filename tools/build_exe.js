@@ -39,7 +39,7 @@ function copyDirSafe(src, dest) {
     }
 }
 
-function build(version = '2.19.1') {
+function build(version = '2.21.0') {
     if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('版本号格式应为 major.minor.patch');
     const OUTPUT_EXE = path.join(RELEASE_DIR, `v${version}.exe`);
     console.log('====== 开始构建 Antigravity 极致压缩单文件 EXE ======');
